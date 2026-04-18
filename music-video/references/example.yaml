@@ -1,0 +1,133 @@
+# Fully populated music-video spec — copy this, edit fields, run:
+#   music_video.py all /path/to/this.yaml
+
+title: Glass Harbour
+
+style: >
+  trip-hop, folk noir, coastal Americana, 74 BPM, fingerpicked acoustic guitar,
+  bowed upright bass, sparse brushed snare, foghorn field recording, salt wind
+  ambience, weathered male vocal, world-weary baritone, close-mic room reverb,
+  minor pentatonic melody, mournful tone, open tuning resonance, subtle string
+  swell on chorus, fading tape hiss outro. A sparse track built around
+  fingerpicked guitar and bowed bass. The vocal sits close and unadorned over
+  brushed percussion and field recordings of harbour wind. A restrained string
+  swell lifts the chorus before the arrangement dissolves back into silence and
+  tape hiss.
+
+lyrics: |
+  [Intro]
+  (soft guitar, ambient wind)
+
+  [Verse]
+  Salt in the air and rust on the crane,
+  the fishermen leave before the morning train.
+  Old radios hum through the fog and the grey,
+  singing the names of the ones who stayed.
+
+  [Chorus]
+  Glass harbour, glass harbour,
+  where the cold light bends,
+  where the sea keeps all the secrets
+  that the shore pretends.
+
+  [Verse 2]
+  A lighthouse blinks its one-eyed prayer,
+  a child draws boats on the kitchen stair.
+
+  [Bridge]
+  (whispered)
+  Everything returns to the water.
+  Everything returns.
+
+  [Outro]
+  (fade out)
+
+# Optional — omit to use defaults (24 fps, 1024x576)
+video:
+  fps: 24
+  resolution: [1024, 576]
+  negative: "pc game, cartoon, modern tech, text, watermark, ugly, blurry"
+  crossfade: 0.5                  # ffmpeg xfade between scenes (hides hard cuts)
+  camera_lora_strength: 0.8       # default strength if scene sets camera_lora
+
+# Optional — first scene starts from this image. If omitted, first scene uses t2v.
+anchor_image: anchor.png
+
+# Optional — suno flags
+suno:
+  make_instrumental: false
+
+# Scene list. start_sec + duration_sec should add up to approximately the song's total
+# length. LTX-2.3 handles single-take shots well; favor "continuous camera, one subject"
+# per scene over multi-cut storyboards.
+scenes:
+  - label: establishing
+    start_sec: 0
+    duration_sec: 8
+    camera_lora: dolly-in              # dolly-in/out/left/right, jib-up/down, static
+    prompt: >
+      wide fog-shrouded fishing harbour at dawn, lonely rusted crane silhouette
+      against muted grey sky, gulls wheeling, salt spray, subtle slow camera
+      push-in, muted desaturated palette
+    image: "@anchor"
+
+  - label: fisherman
+    start_sec: 8
+    duration_sec: 10
+    camera_lora: dolly-left
+    prompt: >
+      weathered middle-aged fisherman in oilskin coat hauling nets over the
+      gunwale of a small boat, breath visible in cold air, early blue-grey
+      light, slow camera pan left
+    image: "@last"
+
+  - label: radio
+    start_sec: 18
+    duration_sec: 8
+    prompt: >
+      close-up of an old vintage transistor radio on a cluttered kitchen shelf,
+      dim warm light, static humming visibly through the speaker grille, shallow
+      depth of field
+    image: "@last"
+
+  - label: chorus_harbour
+    start_sec: 26
+    duration_sec: 14
+    prompt: >
+      aerial sweep over the harbour at golden hour, long shadows on the water,
+      boats at anchor, cinematic, lens flare, gentle camera lift
+    image: "@anchor"
+
+  - label: lighthouse
+    start_sec: 40
+    duration_sec: 8
+    prompt: >
+      distant lighthouse through rolling fog, its beam sweeping across foam-
+      flecked waves, long-lens compression, muted palette
+    image: "@last"
+
+  - label: child_drawing
+    start_sec: 48
+    duration_sec: 10
+    prompt: >
+      a young child sitting on worn wooden kitchen stairs, drawing small boats
+      with a pencil stub on yellowed paper, warm window light from side, quiet
+      domestic atmosphere
+    image: "@last"
+
+  - label: bridge_water
+    start_sec: 58
+    duration_sec: 12
+    prompt: >
+      slow underwater shot looking up at the rippling surface, sunlight
+      fracturing through waves, dreamlike and silent, ambient particles
+      drifting
+    image: "@last"
+
+  - label: outro_fade
+    start_sec: 70
+    duration_sec: 10
+    prompt: >
+      empty harbour at blue hour, one distant boat's light reflected on still
+      water, camera holds steady, gradual fade to near-black
+    image: "@last"

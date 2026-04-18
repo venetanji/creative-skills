@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+# per-project generated media
+outputs/
+test_outputs/
+test_results.json
+# media outputs in the music-video project dirs
+*.mp4
+*.mp3
+*.wav
+*.png
+!music-video/references/*.png
+!comfyui/references/*.png
+# uv ephemeral caches
+.uv_cache/
