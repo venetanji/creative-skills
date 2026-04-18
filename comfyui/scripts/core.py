@@ -12,7 +12,7 @@ import subprocess
 import shlex
 from pathlib import Path
 
-BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
+BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
 
 # Default notification target: Discord DM channel for gio's DMs
 NOTIFY_TARGET = os.environ.get(
