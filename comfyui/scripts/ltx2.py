@@ -36,7 +36,7 @@ CKPT = "ltx-2.3-22b-dev-fp8.safetensors"
 TEXT_ENCODER = "gemma_3_12B_it_fp4_mixed.safetensors"
 UPSCALER = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 DISTILLED_LORA = "ltx-2.3-22b-distilled-lora-384.safetensors"
-NEG_DEFAULT = "pc game, console game, video game, cartoon, childish, ugly, blurry, low quality, watermark, distorted, still frame"
+NEG_DEFAULT = "pc game, console game, video game, cartoon, childish, ugly, blurry, low quality, watermark, distorted, still frame, text, captions, subtitles, signs, logos, lettering, typography, words, letters"
 
 # sigmas match the production corgi workflow — do not tweak without A/B testing
 SIGMAS_PASS1 = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
@@ -123,6 +123,19 @@ def _image_branch(g, image_filename, width, height, img_compression=18):
     return g.node("LTXVPreprocess", image=longer[0], img_compression=img_compression)
 
 
+def _image_branch_multi(g, image_filenames, width, height, img_compression=18):
+    """Preprocess N reference images and concatenate into one IMAGE batch for
+    LTXVImgToVideoInplace. First ref is the canonical identity (e.g. anchor.png);
+    subsequent refs are variation (per-scene anchor, previous-scene last frame)."""
+    branches = [_image_branch(g, f, width, height, img_compression) for f in image_filenames]
+    if len(branches) == 1:
+        return branches[0]
+    out = branches[0]
+    for b in branches[1:]:
+        out = g.node("ImageBatch", image1=out[0], image2=b[0])
+    return out
+
+
 def _flf2v_preprocess_frame(g, image_filename, width, height):
     """FLF2V frame preprocess — no longer-edge resize (frames are already at
     target resolution); nearest-exact scaler + img_compression=25 per ref template."""
@@ -138,10 +151,22 @@ def _flf2v_preprocess_frame(g, image_filename, width, height):
     return g.node("LTXVPreprocess", image=resized[0], img_compression=25)
 
 
-def _audio_from_file(g, audio_filename, seconds, width, height, audio_vae):
+def _audio_from_file(g, audio_filename, seconds, width, height, audio_vae,
+                     length=None, fps=None):
+    """Load and trim audio to the same number of seconds as the rendered
+    video. `length`+`fps` are optional; when provided, trim to length/fps
+    instead of the raw `seconds` input — that aligns audio to LTX's
+    actually-rendered frame count (which `_round_length` snapped to
+    `8k+1`). Otherwise audio can overhang the video by ~0.2s and LTX's
+    audio-VAE truncation chops the TAIL — exactly where a transition's
+    target vocal starts."""
     loaded = g.node("LoadAudio", audio=audio_filename)
+    if length is not None and fps:
+        effective = float(length) / float(fps)
+    else:
+        effective = float(seconds)
     trimmed = g.node("TrimAudioDuration", audio=loaded[0],
-                     duration=float(seconds), start_index=0)
+                     duration=effective, start_index=0)
     encoded = g.node("LTXVAudioVAEEncode", audio=trimmed[0], audio_vae=audio_vae[0])
     mask = g.node("SolidMask", value=0, width=int(width), height=int(height))
     return g.node("SetLatentNoiseMask", samples=encoded[0], mask=mask[0])
@@ -155,8 +180,10 @@ def _empty_audio_latent(g, length, fps, audio_vae):
 
 def _base_video_latent(g, width, height, length, vae, image_ref, strength=0.7):
     """Empty video latent, optionally conditioned on a single reference image
-    via LTXVImgToVideoInplace (i2v/ia2v). For t2v (image_ref=None) returns the
-    empty latent directly."""
+    (or a multi-frame IMAGE batch) via LTXVImgToVideoInplace. Lower strength
+    means the refs act as a soft identity prior instead of a locked first
+    frame — use ~0.4-0.6 for lipsync where the character should be free to
+    move, dance, and act rather than statically singing into the camera."""
     empty = g.node("EmptyLTXVLatentVideo",
                    width=int(width), height=int(height),
                    length=int(length), batch_size=1)
@@ -190,21 +217,29 @@ def _pass_two(g, model, cond, av_latent, seed):
                   sigmas=sigmas[0], latent_image=av_latent[0])
 
 
-def _upsample_between(g, av_pass1, cond, vae, upscaler, image_ref):
-    """Corgi-style between-pass: separate pass-1 output, LTXVCropGuides for cond,
-    upsample + re-apply image via LTXVImgToVideoInplace(s=1.0), concat with pass-1
-    audio. For t2v (image_ref=None) the upsampled video goes straight to concat.
+def _upsample_between(g, av_pass1, cond, vae, upscaler, image_ref,
+                       refine_guide_strength=0.3):
+    """Between-pass: separate pass-1, LTXVCropGuides for cond, upsample,
+    optionally re-apply the image ref via LTXVImgToVideoInplace at a
+    configurable strength, concat with pass-1 audio.
+
+    Historically this called LTXVImgToVideoInplace(s=1.0) which HARD-LOCKED
+    the first frames to the anchor, producing static-looking openings. At
+    strength 0 we skip the re-apply entirely (pass-2 refines freely over
+    pass-1's already-conditioned latent); at 0.3-0.5 the anchor bleeds
+    identity through the refine without pinning motion.
+
     Returns (av_latent_for_pass2, cropped_conditioning)."""
     sep = g.node("LTXVSeparateAVLatent", av_latent=av_pass1[0])
     cropped = g.node("LTXVCropGuides",
                      positive=cond[0], negative=cond[1], latent=sep[0])
     upsampled = g.node("LTXVLatentUpsampler",
                        samples=sep[0], upscale_model=upscaler[0], vae=vae)
-    if image_ref is not None:
+    if image_ref is not None and refine_guide_strength > 0:
         bypass = g.node("PrimitiveBoolean", value=False)
         video_re = g.node("LTXVImgToVideoInplace",
                           vae=vae, image=image_ref[0], latent=upsampled[0],
-                          strength=1.0, bypass=bypass[0])
+                          strength=float(refine_guide_strength), bypass=bypass[0])
     else:
         video_re = upsampled
     av_for_pass2 = g.node("LTXVConcatAVLatent",
@@ -266,6 +301,7 @@ def _decode_and_save(g, av_final, vae, audio_vae, fps, filename_prefix,
 def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
            image_ref_builder=None, audio_ref_builder=None, negative=None,
            fast=False, camera_lora=None, camera_lora_strength=0.8,
+           base_guide_strength=0.7, refine_guide_strength=0.3,
            ckpt=CKPT, text_encoder=TEXT_ENCODER):
     g = WorkflowGraph()
     checkpoint, clip, audio_vae, upscaler = _loaders(g, ckpt, text_encoder)
@@ -275,7 +311,8 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
 
     image_ref = image_ref_builder(g) if image_ref_builder else None
     video_latent = _base_video_latent(g, width, height, length,
-                                      vae=checkpoint[2], image_ref=image_ref)
+                                      vae=checkpoint[2], image_ref=image_ref,
+                                      strength=base_guide_strength)
 
     if audio_ref_builder:
         audio_latent = audio_ref_builder(g, audio_vae, width, height)
@@ -294,7 +331,8 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
     else:
         av_for_pass2, cropped_cond = _upsample_between(
             g, av_pass1, cond, vae=checkpoint[2], upscaler=upscaler,
-            image_ref=image_ref)
+            image_ref=image_ref,
+            refine_guide_strength=refine_guide_strength)
         av_final = _pass_two(g, model, cropped_cond, av_for_pass2,
                              seed=base_seed + 1)
         _decode_and_save(g, av_final, vae=checkpoint[2], audio_vae=audio_vae,
@@ -343,16 +381,33 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
                                filename_prefix="ltx2_ia2v",
                                seed=None, negative=None, fast=False,
                                camera_lora=None, camera_lora_strength=0.8,
+                               image_refs=None,
+                               base_guide_strength=0.5,
+                               refine_guide_strength=0.3,
                                checkpoint_name=None, text_encoder=None,
                                **_):
+    """Image+Audio → Video.
+
+    image_filename: primary reference (required; backward-compat).
+    image_refs: optional list of additional references to concatenate into
+      an IMAGE batch — use for multi-frame identity (e.g. [anchor.png,
+      previous_scene-last.png]) for lipsync continuity + less face drift.
+    base_guide_strength: strength of the LTXVImgToVideoInplace on the
+      initial latent. 0.5 gives identity without locking frame 0.
+    refine_guide_strength: strength of the re-apply after upsampling. 0.3
+      is a soft refine; 0 disables it entirely. Historical default 1.0
+      hard-locked the opening frames — do not use for action shots."""
     length = _round_length(seconds, fps)
+    all_refs = [image_filename] + list(image_refs or [])
     return _build(prompt, fps=fps, width=width, height=height, length=length,
                   seed=seed, filename_prefix=filename_prefix,
-                  image_ref_builder=lambda g: _image_branch(g, image_filename, width, height),
+                  image_ref_builder=lambda g: _image_branch_multi(g, all_refs, width, height),
                   audio_ref_builder=lambda g, avae, w, h:
                       _audio_from_file(g, audio_filename, seconds, w, h, avae),
                   negative=negative, fast=fast,
                   camera_lora=camera_lora, camera_lora_strength=camera_lora_strength,
+                  base_guide_strength=base_guide_strength,
+                  refine_guide_strength=refine_guide_strength,
                   ckpt=checkpoint_name or CKPT,
                   text_encoder=text_encoder or TEXT_ENCODER)
 
@@ -416,6 +471,152 @@ def ltx2_first_last_frame_to_video(first_frame_filename, last_frame_filename, pr
         _decode_and_save(g, av_final, vae=checkpoint[2], audio_vae=audio_vae,
                          fps=fps, filename_prefix=filename_prefix,
                          strip_guides_cond=pass2_cond)
+    return g.to_dict()
+
+
+TRANSITION_LORA = "ltx2.3-transition.safetensors"
+TRANSITION_TRIGGER = "zhuanchang"
+
+
+def _video_tail_frames(g, video_filename, num_frames, width, height):
+    """Return the LAST N frames of a video as an LTXVPreprocess'd IMAGE
+    batch in original order. Uses reverse-slice-reverse because
+    GetImageRangeFromBatch only supports start_index >= -1."""
+    vid = g.node("LoadVideo", file=video_filename)
+    comp = g.node("GetVideoComponents", video=vid[0])
+    rev1 = g.node("ReverseImageBatch", images=comp[0])
+    head_of_rev = g.node("GetImageRangeFromBatch",
+                         images=rev1[0], start_index=0,
+                         num_frames=int(num_frames))
+    tail = g.node("ReverseImageBatch", images=head_of_rev[0])
+    resized = g.node("ResizeImageMaskNode", **{
+        "input": tail[0],
+        "resize_type": "scale dimensions",
+        "resize_type.width": int(width),
+        "resize_type.height": int(height),
+        "resize_type.crop": "center",
+        "scale_method": "nearest-exact",
+    })
+    return g.node("LTXVPreprocess", image=resized[0], img_compression=25)
+
+
+def _video_head_frames(g, video_filename, num_frames, width, height):
+    """Load a video and return the FIRST N frames as an LTXVPreprocess'd
+    IMAGE batch."""
+    vid = g.node("LoadVideo", file=video_filename)
+    comp = g.node("GetVideoComponents", video=vid[0])
+    head = g.node("GetImageRangeFromBatch",
+                  images=comp[0], start_index=0, num_frames=int(num_frames))
+    resized = g.node("ResizeImageMaskNode", **{
+        "input": head[0],
+        "resize_type": "scale dimensions",
+        "resize_type.width": int(width),
+        "resize_type.height": int(height),
+        "resize_type.crop": "center",
+        "scale_method": "nearest-exact",
+    })
+    return g.node("LTXVPreprocess", image=resized[0], img_compression=25)
+
+
+def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
+                    seconds=4, fps=25, width=720, height=1280,
+                    filename_prefix="ltx2_transition",
+                    seed=None, negative=None,
+                    first_guide_strength=1.0, last_guide_strength=1.0,
+                    audio_filename=None,
+                    prev_video_filename=None, next_video_filename=None,
+                    multiframe_guide=9,
+                    checkpoint_name=None, text_encoder=None,
+                    **_):
+    """Transition clip scene N → scene N+1 via the ltx2.3-transition LoRA.
+
+    Two-pass refine chain, AddGuide at both ends at strength 1.0 by
+    default. With prev_video_filename / next_video_filename, the guides
+    become MULTI-FRAME: the last `multiframe_guide` frames of the prev
+    video seed frame 0 (LTX has N frames of motion before the morph),
+    and the first `multiframe_guide` frames of the next video seed
+    frame -1 (LTX has N frames to prepare scene-B's motion into). Both
+    use built-in LoadVideo + GetVideoComponents + GetImageRangeFromBatch
+    — no VHS dependency.
+
+    Audio is trimmed to `length/fps` (= _round_length output over fps),
+    matching the actually-rendered video duration so LTX doesn't
+    truncate the audio tail. The boundary-spanning song slice that
+    starts the next scene's vocal should fit entirely inside."""
+    if TRANSITION_TRIGGER not in prompt.lower():
+        prompt = f"{prompt.rstrip('. ')}. {TRANSITION_TRIGGER}"
+    length = _round_length(seconds, fps)
+    ckpt = checkpoint_name or CKPT
+
+    g = WorkflowGraph()
+    checkpoint, clip, audio_vae, upscaler = _loaders(g, ckpt, text_encoder or TEXT_ENCODER)
+    model = _distilled_lora(g, checkpoint[0])
+    model = g.node("LoraLoaderModelOnly", model=model[0],
+                   lora_name=TRANSITION_LORA, strength_model=1.0)
+    cond = _encode_prompts(g, clip[0], prompt, negative, fps)
+
+    # First-frame guide: multi-frame if prev video supplied, else single frame
+    if prev_video_filename:
+        first_img = _video_tail_frames(g, prev_video_filename,
+                                       multiframe_guide, width, height)
+    else:
+        first_img = _flf2v_preprocess_frame(g, first_frame_filename, width, height)
+
+    # Last-frame guide: multi-frame if next video supplied, else single frame
+    if next_video_filename:
+        last_img = _video_head_frames(g, next_video_filename,
+                                      multiframe_guide, width, height)
+    else:
+        last_img = _flf2v_preprocess_frame(g, last_frame_filename, width, height)
+
+    empty_video = g.node("EmptyLTXVLatentVideo",
+                         width=int(width), height=int(height),
+                         length=int(length), batch_size=1)
+
+    g1 = g.node("LTXVAddGuide",
+                positive=cond[0], negative=cond[1], vae=checkpoint[2],
+                latent=empty_video[0], image=first_img[0],
+                frame_idx=0, strength=float(first_guide_strength))
+    g2 = g.node("LTXVAddGuide",
+                positive=g1[0], negative=g1[1], vae=checkpoint[2],
+                latent=g1[2], image=last_img[0],
+                frame_idx=-1, strength=float(last_guide_strength))
+
+    if audio_filename:
+        audio_latent = _audio_from_file(g, audio_filename, seconds,
+                                        width, height, audio_vae,
+                                        length=length, fps=fps)
+    else:
+        audio_latent = _empty_audio_latent(g, length, fps, audio_vae)
+
+    # Align audio and video latents to the same time range with pad
+    # so LTX doesn't silently truncate the audio tail (which is where
+    # the next scene's first vocal lives).
+    effective_seconds = float(length) / float(fps)
+    aligned = g.node("LTXVAudioVideoMask",
+                     video_latent=g2[2],
+                     audio_latent=audio_latent[0],
+                     video_fps=float(fps),
+                     video_start_time=0.0,
+                     video_end_time=effective_seconds,
+                     audio_start_time=0.0,
+                     audio_end_time=effective_seconds,
+                     max_length="pad")
+    av_latent = g.node("LTXVConcatAVLatent",
+                       video_latent=aligned[0], audio_latent=aligned[1])
+
+    base_seed = seed or _rand_seed()
+    av_pass1 = _pass_one(g, model, g2, av_latent, seed=base_seed)
+
+    av_for_pass2, pass2_cond = _upsample_between_flf2v(
+        g, av_pass1, cond, vae=checkpoint[2], upscaler=upscaler,
+        first_img=first_img, last_img=last_img,
+        guide_strength=float(last_guide_strength))
+    av_final = _pass_two(g, model, pass2_cond, av_for_pass2,
+                         seed=base_seed + 1)
+    _decode_and_save(g, av_final, vae=checkpoint[2], audio_vae=audio_vae,
+                     fps=fps, filename_prefix=filename_prefix,
+                     strip_guides_cond=pass2_cond)
     return g.to_dict()
 
 

@@ -122,156 +122,98 @@ def generate_song(lyrics, tags, title, instrumental=False, timeout=120):
                 'all_download_urls': dl_matches,
             }
 
-    # Extract song_id from response
+    # Extract song_id(s) from response. Suno always returns 2 variants; if the
+    # upstream JSON branch didn't populate all_ids/all_download_urls, scrape them
+    # out of the 'result' text.
     song_id = response.get('id') or response.get('song_id')
-    if not song_id and 'result' in response:
-        id_match = re.search(r'ID:\s*([a-f0-9-]+)', response['result'])
-        if id_match:
-            song_id = id_match.group(1)
+    result_text = response.get('result', '') if isinstance(response.get('result'), str) else ''
+    if 'all_ids' not in response and result_text:
+        ids = re.findall(r'ID:\s*([a-f0-9-]+)', result_text)
+        if ids:
+            response['all_ids'] = ids
+            if not song_id:
+                song_id = ids[0]
+    if 'all_download_urls' not in response and result_text:
+        urls = re.findall(r'Download:\s*(https?://\S+)', result_text)
+        if urls:
+            response['all_download_urls'] = urls
 
     if not song_id:
         raise RuntimeError(f"No song_id in response: {response}")
 
-    # Fast path: if the response gave us a direct CDN download URL, just fetch it
-    # (skips the slower MCP download_song round-trip).
+    # Direct CDN URL is kept only as a fallback — we prefer the tailscale-proxied
+    # MCP download_song URL below, which is stable and doesn't 403 flakily.
     direct_url = response.get('download_url')
     if not direct_url and 'result' in response:
         dm = re.search(r'Download:\s*(https?://\S+)', response['result'])
         if dm:
             direct_url = dm.group(1)
 
-    if direct_url:
-        # Suno always returns 2 variants. Download both if we got both URLs; the
-        # primary ('local_file') is still the first one for backward compatibility,
-        # and a 'local_files' list carries all downloaded variants.
-        all_urls = response.get('all_download_urls') or [direct_url]
-        all_ids  = response.get('all_ids') or [song_id]
-        local_files: list[str] = []
+    # Suno always returns 2 variants. Download both if we got both IDs; the
+    # primary ('local_file') is still the first one for backward compatibility,
+    # and a 'local_files' list carries all downloaded variants.
+    all_urls = response.get('all_download_urls') or ([direct_url] if direct_url else [])
+    all_ids  = response.get('all_ids') or [song_id]
+    local_files: list[str] = []
 
-        def _fetch(url: str, dest: Path) -> bool:
-            for attempt in range(40):
-                try:
-                    req = urllib.request.Request(url, headers={
-                        'User-Agent': 'Mozilla/5.0 (compatible; OpenClaw/1.0)'
-                    })
-                    with urllib.request.urlopen(req, timeout=30) as r:
-                        if r.status == 200:
-                            dest.write_bytes(r.read())
-                            return True
-                except urllib.error.HTTPError as e:
-                    if e.code not in (403, 404):
-                        raise
-                except Exception:
-                    pass
-                time.sleep(5)
-            return False
+    def _fetch(url: str, dest: Path, tries: int, per_try_timeout: int = 30) -> bool:
+        for _ in range(tries):
+            try:
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (compatible; OpenClaw/1.0)'
+                })
+                with urllib.request.urlopen(req, timeout=per_try_timeout) as r:
+                    if r.status == 200:
+                        dest.write_bytes(r.read())
+                        return True
+            except urllib.error.HTTPError as e:
+                if e.code not in (403, 404):
+                    print(f"  HTTP {e.code} on {url}", file=sys.stderr)
+            except Exception as e:
+                print(f"  fetch err: {e}", file=sys.stderr)
+            time.sleep(3)
+        return False
 
-        for i, (vid, vurl) in enumerate(zip(all_ids, all_urls)):
-            out = output_dir / f"suno_{vid}.mp3"
-            print(f"Variant {i+1}/{len(all_urls)}: {vurl}", file=sys.stderr)
-            if not _fetch(vurl, out):
-                raise RuntimeError(f"Timed out fetching variant {i+1}: {vurl}")
-            print(f"  Downloaded: {out.stat().st_size} bytes to {out}", file=sys.stderr)
-            local_files.append(str(out))
+    def _mcp_tailscale_url(vid: str) -> str | None:
+        """Trigger MCP download_song and return the tailscale-reachable URL."""
+        print(f"  Triggering MCP download for {vid}...", file=sys.stderr)
+        dr = subprocess.run(
+            ["npx", "mcporter", "call", "suno.download_song",
+             f"song_id={vid}", "--config", config, "--timeout", "300000"],
+            capture_output=True, text=True, cwd=os.path.expanduser("~"), timeout=300,
+        )
+        body = (dr.stdout or "") + (dr.stderr or "")
+        m = re.search(r'Local URL:\s*(http://[^\s"\'<>]+)', body)
+        if m:
+            url = m.group(1).replace('0.0.0.0', 'localhost:8085')
+            print(f"  MCP URL: {url}", file=sys.stderr)
+            return url
+        print(f"  MCP call returned no Local URL (rc={dr.returncode})", file=sys.stderr)
+        return None
 
-        response['local_file'] = local_files[0]   # primary (backward compat)
-        response['local_files'] = local_files     # all variants in order
-        return response
-    
-    print(f"Song generated: {song_id}", file=sys.stderr)
-    
-    # Call MCP download_song to trigger server-side download
-    # This can take 2-3 minutes as it downloads from Suno
-    print(f"Triggering server download (this may take 2-3 minutes)...", file=sys.stderr)
-    download_cmd = [
-        "npx", "mcporter", "call", "suno.download_song",
-        f"song_id={song_id}",
-        "--config", config,
-        "--timeout", "300000"  # 5 minutes in ms
-    ]
-    
-    download_result = subprocess.run(
-        download_cmd,
-        capture_output=True,
-        text=True,
-        cwd=os.path.expanduser("~"),
-        timeout=300  # 5 minutes
-    )
-    
-    # Parse download response to get the local URL
-    try:
-        download_response = json.loads(download_result.stdout)
-        # Extract Local URL from response like: "Local URL: http://0.0.0.0:8085/audio/36e9e99c.mp3"
-        result_text = download_response.get('result', '')
-        url_match = re.search(r'Local URL:\s*(http://[^\s]+)', result_text)
-        if url_match:
-            mcp_audio_url = url_match.group(1).replace('0.0.0.0', 'suno-mcp.tail9683c.ts.net')
-            print(f"Found MCP URL: {mcp_audio_url}", file=sys.stderr)
-        else:
-            # Fallback: construct URL from song_id (may use short ID)
-            mcp_audio_url = f"http://suno-mcp.tail9683c.ts.net:8085/audio/{song_id}.mp3"
-    except Exception as e:
-        print(f"Could not parse download response: {e}", file=sys.stderr)
-        mcp_audio_url = f"http://suno-mcp.tail9683c.ts.net:8085/audio/{song_id}.mp3"
-    
-    if download_result.returncode != 0:
-        print(f"Download trigger warning: {download_result.stderr}", file=sys.stderr)
-        # Continue anyway - file might still be available
-    output_file = output_dir / f"suno_{song_id}.mp3"
-    
-    print(f"Waiting for file at {mcp_audio_url}...", file=sys.stderr)
-    
-    max_wait = 120  # seconds
-    poll_interval = 3  # seconds
-    waited = 0
-    
-    while waited < max_wait:
-        try:
-            req = urllib.request.Request(mcp_audio_url, method='HEAD')
-            with urllib.request.urlopen(req, timeout=10) as response:
-                if response.status == 200:
-                    print(f"File ready! Downloading...", file=sys.stderr)
-                    break
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                print(f"File not ready yet... ({waited}s)", file=sys.stderr)
-            else:
-                print(f"HTTP error {e.code}, retrying...", file=sys.stderr)
-        except Exception as e:
-            print(f"Connection error: {e}, retrying...", file=sys.stderr)
-        
-        time.sleep(poll_interval)
-        waited += poll_interval
-    else:
-        raise RuntimeError(f"Timeout waiting for file after {max_wait}s")
-    
-    # Download the file
-    print(f"Downloading from {mcp_audio_url}...", file=sys.stderr)
-    req = urllib.request.Request(mcp_audio_url, headers={
-        'User-Agent': 'Mozilla/5.0 (compatible; OpenClaw/1.0)'
-    })
-    
-    with urllib.request.urlopen(req, timeout=60) as response_obj:
-        with open(output_file, 'wb') as f:
-            f.write(response_obj.read())
-    
-    if not output_file.exists():
-        raise RuntimeError("Download failed - file not created")
-    
-    file_size = output_file.stat().st_size
-    print(f"Downloaded: {file_size} bytes to {output_file}", file=sys.stderr)
-    
-    # Add local file to response
-    if isinstance(response, dict):
-        response['local_file'] = str(output_file)
-        return response
-    else:
-        # If response is not a dict, create a new response
-        return {
-            'result': response if isinstance(response, str) else str(response),
-            'local_file': str(output_file),
-            'song_id': song_id
-        }
+    for i, vid in enumerate(all_ids):
+        out = output_dir / f"suno_{vid}.mp3"
+        direct = all_urls[i] if i < len(all_urls) else None
+        print(f"Variant {i+1}/{len(all_ids)}: id={vid}", file=sys.stderr)
+
+        # Prefer tailscale-proxied MCP URL (stable, no 403 flakiness).
+        mcp_url = _mcp_tailscale_url(vid)
+        ok = False
+        if mcp_url:
+            ok = _fetch(mcp_url, out, tries=40)
+            if not ok:
+                print(f"  MCP URL didn't yield file; falling back to direct CDN", file=sys.stderr)
+        if not ok and direct:
+            print(f"  Direct: {direct}", file=sys.stderr)
+            ok = _fetch(direct, out, tries=40)
+        if not ok:
+            raise RuntimeError(f"Failed to download variant {i+1} (id={vid})")
+        print(f"  Downloaded: {out.stat().st_size} bytes to {out}", file=sys.stderr)
+        local_files.append(str(out))
+
+    response['local_file'] = local_files[0]   # primary (backward compat)
+    response['local_files'] = local_files     # all variants in order
+    return response
 
 
 if __name__ == "__main__":

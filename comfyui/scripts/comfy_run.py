@@ -15,7 +15,7 @@ Options:
 
 Output: prints asset URLs and saves files to --output-dir.
 
-Env: COMFY_URL (default: https://comfyui.tail9683c.ts.net)
+Env: COMFY_URL (default: http://localhost:8188)
 """
 
 import json
@@ -26,7 +26,7 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
-BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
+BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
 
 
 def post_json(path, body):

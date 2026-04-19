@@ -161,10 +161,10 @@ def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notif
                 last_st = st
             if outputs:
                 _save_assets(entry, output_dir, notify=notify, caption_template=caption_template, user_prompt=user_prompt)
-                return
+                return prompt_id
             if (entry.get("status") or {}).get("completed") is True or st == "error":
                 print("Completed with no outputs.", file=sys.stderr)
-                return
+                return prompt_id
         time.sleep(2)
     raise TimeoutError(f"Timed out after {timeout}s")
 

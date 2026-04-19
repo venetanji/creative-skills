@@ -102,10 +102,19 @@ def _log(project: Path, msg: str) -> None:
         f.write(line + "\n")
 
 
-def _run(cmd: list[str], cwd: Path | None = None, log_path: Path | None = None) -> int:
-    """Run subprocess; stream stderr to log, return exit code."""
+def _run(cmd: list[str], cwd: Path | None = None, log_path: Path | None = None,
+         env_override: dict[str, str] | None = None) -> int:
+    """Run subprocess; stream stderr to log, return exit code.
+
+    env_override — inject extra env vars (merged with os.environ). Used to
+    route subprocess calls to different ComfyUI instances per tool:
+      COMFY_URL_FLUX  → flux2 image gen (anchors) on the 12GB GPU
+      COMFY_URL_VIDEO → LTX video gen (t2v/ia2v) on the 24GB GPU"""
+    env = None
+    if env_override:
+        env = {**os.environ, **env_override}
     with subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          text=True, bufsize=1) as p:
+                          text=True, bufsize=1, env=env) as p:
         assert p.stdout is not None
         for line in p.stdout:
             print(line, end="")
@@ -114,6 +123,20 @@ def _run(cmd: list[str], cwd: Path | None = None, log_path: Path | None = None) 
                     f.write(line)
         p.wait()
         return p.returncode
+
+
+def _comfy_env_for(kind: str) -> dict[str, str]:
+    """Pick the COMFY_URL for a tool kind.
+      kind=='flux'  → COMFY_URL_FLUX  (falls back to COMFY_URL)
+      kind=='video' → COMFY_URL_VIDEO (falls back to COMFY_URL)
+    Empty dict if neither is set (subprocess inherits parent's COMFY_URL)."""
+    var = {"flux": "COMFY_URL_FLUX", "video": "COMFY_URL_VIDEO"}.get(kind)
+    if not var:
+        return {}
+    val = os.environ.get(var)
+    if not val:
+        return {}
+    return {"COMFY_URL": val}
 
 
 def _load_spec(yaml_path: str) -> tuple[dict, Path]:
@@ -155,15 +178,16 @@ def cmd_plan(spec: dict, project: Path) -> None:
         sys.exit("spec has no `scenes`")
     total = max((s["start_sec"] + s["duration_sec"]) for s in scenes)
     vs = _video_spec(spec)
-    raw_video = spec.get("video") or {}
-    cross = float(raw_video.get("crossfade", 0) or 0)
-    assembled = sum(s["duration_sec"] for s in scenes) - cross * max(0, len(scenes) - 1)
+    # Final video = sum(scene duration_sec) — each scene's tail buffer is
+    # trimmed off at concat (via GetImageRangeFromBatch), no crossfade.
+    assembled = sum(s["duration_sec"] for s in scenes)
 
+    tail_buf = float((spec.get("video") or {}).get("tail_buffer_sec", 0) or 0)
     print(f"title         : {spec.get('title','(untitled)')}")
     print(f"style         : {spec.get('style','')[:120]}")
-    print(f"video         : {vs['width']}x{vs['height']} @ {vs['fps']}fps  crossfade={cross}s")
+    print(f"video         : {vs['width']}x{vs['height']} @ {vs['fps']}fps  tail_buffer={tail_buf}s")
     print(f"scenes total  : {total:.1f}s across {len(scenes)} scene(s)")
-    print(f"assembled len : {assembled:.1f}s  (scene sum minus crossfade overlap)")
+    print(f"assembled len : {assembled:.1f}s  (trim each scene to duration_sec, buffer dropped)")
     print(f"anchor        : {spec.get('anchor_image','(none)')}")
 
     # Compare against the generated song if it already exists.
@@ -248,20 +272,26 @@ def cmd_song(spec: dict, project: Path) -> None:
     _log(project, f"song saved: {out_mp3} ({out_mp3.stat().st_size//1024} KB)")
 
 
-def _slice_song(project: Path, scene: dict, stem: str) -> Path:
+def _slice_song(project: Path, scene: dict, stem: str,
+                tail_buffer_sec: float = 0.0) -> Path:
+    """Slice the song for LTX audio conditioning. tail_buffer_sec extends the
+    slice past the scene's nominal end so LTX has audio lookhead to finish
+    the phoneme / close the mouth — otherwise the mouth freezes mid-word at
+    scene boundary. Extra tail is absorbed by crossfade=tail_buffer in
+    assembly so the timeline doesn't drift."""
     slice_mp3 = project / "song_slices" / f"{stem}.mp3"
     if slice_mp3.exists():
         return slice_mp3
     ffmpeg = FFMPEG()
+    total = float(scene["duration_sec"]) + float(tail_buffer_sec)
     cmd = [ffmpeg, "-y", "-ss", str(scene["start_sec"]),
-           "-t",  str(scene["duration_sec"]),
+           "-t",  str(total),
            "-i",  str(project / "song.mp3"),
            "-c",  "copy", str(slice_mp3)]
     rc = subprocess.run(cmd, capture_output=True).returncode
     if rc != 0:
-        # fallback re-encode
         rc = subprocess.run([ffmpeg, "-y", "-ss", str(scene["start_sec"]),
-                             "-t",  str(scene["duration_sec"]),
+                             "-t",  str(total),
                              "-i",  str(project / "song.mp3"),
                              "-c:a", "libmp3lame", "-b:a", "192k", str(slice_mp3)],
                             capture_output=True).returncode
@@ -314,7 +344,24 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
         else:
             sys.exit(f"scene {idx}: anchor needs 0/1/2 references, got {len(ref_paths)}")
 
-    common = ["--prompt", anchor_cfg["prompt"],
+    # Identity-preservation guard for i2i/i2i2 anchors: when we hand flux2 a
+    # reference image of a person, auto-append a concrete instruction to
+    # keep the same face. Otherwise flux2 reads the prompt as a brief and
+    # invents a new-looking person every scene → drift + gender swap + the
+    # "my face is degrading" problem. Prompt authors can skip this by
+    # adding `keep_identity: false` to the anchor block.
+    anchor_prompt = anchor_cfg["prompt"]
+    if anchor_type in ("i2i", "i2i2") and anchor_cfg.get("keep_identity", True):
+        id_guard = (" Keep the exact same person from the reference image: "
+                    "same face shape, facial features, eye shape and color, "
+                    "nose, lips, skin tone, hair color and style, and body "
+                    "type. Only the pose, expression, clothing styling, "
+                    "lighting, and environment should change according to "
+                    "this prompt.")
+        if id_guard.strip().lower() not in anchor_prompt.lower():
+            anchor_prompt = anchor_prompt.rstrip(" .") + "." + id_guard
+
+    common = ["--prompt", anchor_prompt,
               "--width",  str(w),
               "--height", str(h),
               "--prefix", f"{stem}-anchor",
@@ -343,7 +390,8 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
 
     _log(project, f"scene {idx}: generating anchor via flux2 "
                   f"({anchor_type}{' refs='+','.join(refs) if refs else ''})")
-    rc = _run(cmd, log_path=project / "run.log")
+    rc = _run(cmd, log_path=project / "run.log",
+              env_override=_comfy_env_for("flux"))
     if rc != 0:
         sys.exit(f"anchor gen failed for scene {idx}")
 
@@ -363,8 +411,10 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
 
 
 def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str | None:
-    """Resolve `image: @anchor | @last | path`. Returns absolute path string, or None
-    if @last at idx=1 and no anchor → t2v."""
+    """Resolve `image: @none | @anchor | @last | path`. Returns absolute path
+    string, or None if @none (force t2v), or @last at idx=1 with no anchor → t2v."""
+    if ref == "@none":
+        return None  # explicit t2v — no image conditioning, no audio slice
     if not ref or ref == "@last":
         if idx == 1:
             anchor = spec.get("anchor_image")
@@ -417,7 +467,17 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     if not (project / "song.mp3").exists():
         sys.exit("song.mp3 missing — run `song` first")
 
-    slice_mp3 = _slice_song(project, scene, stem)
+    vs = _video_spec(spec)
+    # Lipsync scenes render with a tail buffer so LTX has audio lookhead to
+    # close the phoneme; the buffer tail is trimmed off at assemble time
+    # (GetImageRangeFromBatch) so the final timeline is exact. t2v scenes
+    # don't need audio lookhead — render at duration_sec exactly.
+    is_lipsync = bool(scene.get("anchor"))
+    tail_buffer = float(vs.get("tail_buffer_sec", 0.0))
+    effective_duration = float(scene["duration_sec"]) + (tail_buffer if is_lipsync else 0.0)
+
+    slice_mp3 = _slice_song(project, scene, stem,
+                            tail_buffer_sec=tail_buffer if is_lipsync else 0.0)
 
     # Prefer a scene-specific pre-generated anchor (flux2) when scene.anchor is set.
     # Falls back to the @last/@anchor/literal image chain otherwise.
@@ -426,11 +486,10 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         image_path = pre_gen_anchor
     else:
         image_path = _resolve_image(spec, project, idx, scene.get("image"))
-    vs = _video_spec(spec)
 
     # comfy_graph takes <cmd> as the first positional, then --opts.
     prefix = stem
-    common = ["--seconds", str(int(scene["duration_sec"])),
+    common = ["--seconds", f"{effective_duration:.2f}",
               "--fps",     str(vs["fps"]),
               "--width",   str(vs["width"]),
               "--height",  str(vs["height"]),
@@ -458,12 +517,22 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         # First scene with no anchor → fall back to t2v (no audio slice).
         cmd = ["python3", str(COMFY), "t2v"] + common
     else:
+        # For lipsync scenes, add previous scene's last frame as a second
+        # IMAGE reference so LTX has identity + scene-to-scene continuity
+        # without hard-pasting the anchor as frame 0.
+        ia2v_extras: list[str] = []
+        if is_lipsync and idx > 1:
+            prev_label = spec["scenes"][idx - 2].get("label", "scene")
+            prev_last = project / "scenes" / f"{_scene_stem(idx - 1, prev_label)}-last.png"
+            if prev_last.exists():
+                ia2v_extras += ["--image-refs", str(prev_last)]
         cmd = ["python3", str(COMFY), "ia2v",
                "--image", image_path,
-               "--audio", str(slice_mp3)] + common
+               "--audio", str(slice_mp3)] + ia2v_extras + common
 
     _log(project, f"scene {idx} '{stem}': {scene['prompt'][:80]}")
-    rc = _run(cmd, log_path=project / "run.log")
+    rc = _run(cmd, log_path=project / "run.log",
+              env_override=_comfy_env_for("video"))
     if rc != 0:
         sys.exit(f"scene {idx} generation failed (rc={rc})")
 
@@ -491,119 +560,241 @@ def _probe_duration(path: Path) -> float:
     return h * 3600 + mn * 60 + s
 
 
-def cmd_assemble(spec: dict, project: Path) -> None:
+def _transition_duration(spec, idx) -> float:
+    """Effective transition duration for the boundary between scenes
+    idx→idx+1 (1-indexed). Returns 0 if transitions are disabled."""
+    vs = spec.get("video") or {}
+    tv = vs.get("transitions") or {}
+    if not tv.get("enabled"):
+        return 0.0
     scenes = spec.get("scenes", [])
-    mp4s: list[Path] = []
-    for i, s in enumerate(scenes, 1):
-        stem = _scene_stem(i, s.get("label", "scene"))
-        p = project / "scenes" / f"{stem}.mp4"
-        if not p.exists():
-            sys.exit(f"scene {i} MP4 missing at {p} — run it first")
-        mp4s.append(p)
+    if idx < 1 or idx >= len(scenes):
+        return 0.0
+    # Per-boundary override lives on the INCOMING scene (scenes[idx])
+    incoming = scenes[idx]
+    override = (incoming.get("transition_from_prev") or {}).get("duration")
+    return float(override if override is not None else tv.get("duration", 2.0))
+
+
+def cmd_transitions(spec: dict, project: Path) -> None:
+    """Render transition clips between each adjacent scene pair. Each
+    transition is a morph from scene N's last frame → scene N+1's first
+    frame, driven by the ltx2.3-transition LoRA with an audio slice of
+    the song spanning the cut. Transitions run on COMFY_URL_FLUX (the
+    12GB GPU) so they can render in parallel with the main scene batch
+    on COMFY_URL_VIDEO. Restart-safe."""
+    vs = spec.get("video") or {}
+    tv = vs.get("transitions") or {}
+    if not tv.get("enabled"):
+        _log(project, "transitions disabled (video.transitions.enabled: false)")
+        return
+    default_prompt = tv.get("prompt",
+        "a smooth cinematic morph between scenes, matching lighting and mood, "
+        "continuous motion across the cut")
+    default_fps = int(tv.get("fps", 25))
+
+    scenes = spec.get("scenes", [])
+    if len(scenes) < 2:
+        return
+    tdir = project / "transitions"
+    tdir.mkdir(exist_ok=True)
+    ffmpeg = FFMPEG()
+
+    for i in range(1, len(scenes)):
+        dur = _transition_duration(spec, i)
+        if dur <= 0:
+            continue
+        a_idx = i          # outgoing scene (1-indexed)
+        b_idx = i + 1      # incoming scene (1-indexed)
+        a = scenes[a_idx - 1]
+        b = scenes[b_idx - 1]
+        a_stem = _scene_stem(a_idx, a.get("label", "scene"))
+        b_stem = _scene_stem(b_idx, b.get("label", "scene"))
+        out_mp4 = tdir / f"{a_stem}__{b_stem}.mp4"
+        if out_mp4.exists():
+            _log(project, f"transition {a_idx}→{b_idx} already exists, skipping")
+            continue
+
+        a_last = project / "scenes" / f"{a_stem}-last.png"
+        b_mp4 = project / "scenes" / f"{b_stem}.mp4"
+        if not a_last.exists() or not b_mp4.exists():
+            _log(project, f"transition {a_idx}→{b_idx} skipped — "
+                          f"prerequisites missing (last={a_last.exists()} "
+                          f"b_mp4={b_mp4.exists()})")
+            continue
+
+        # Extract scene B's first frame
+        b_first = tdir / f"{b_stem}-first.png"
+        if not b_first.exists():
+            rc = subprocess.run(
+                [ffmpeg, "-y", "-v", "error", "-i", str(b_mp4),
+                 "-vf", "select=eq(n\\,0)", "-vframes", "1", "-q:v", "2",
+                 str(b_first)], capture_output=True).returncode
+            if rc != 0:
+                _log(project, f"transition {a_idx}→{b_idx}: first-frame extract failed")
+                continue
+
+        # Audio slice covering the boundary ± dur/2
+        a_end_song = float(a["start_sec"]) + float(a["duration_sec"])
+        slice_start = max(0.0, a_end_song - dur / 2)
+        audio_slice = tdir / f"{a_stem}__{b_stem}-audio.mp3"
+        if not audio_slice.exists():
+            subprocess.run([ffmpeg, "-y", "-ss", f"{slice_start:.3f}",
+                            "-t", f"{dur:.3f}",
+                            "-i", str(project / "song.mp3"),
+                            "-c:a", "libmp3lame", "-b:a", "192k",
+                            str(audio_slice)],
+                           capture_output=True)
+
+        # Per-boundary prompt override on scene B
+        prompt = (b.get("transition_from_prev") or {}).get("prompt", default_prompt)
+
+        prefix = f"trans_{a_idx}_{b_idx}"
+        cmd = ["python3", str(COMFY), "transition",
+               "--first", str(a_last),
+               "--last", str(b_first),
+               "--audio", str(audio_slice),
+               "--prompt", prompt,
+               "--seconds", f"{dur:.2f}",
+               "--fps", str(default_fps),
+               "--width", str(vs["resolution"][0] if isinstance(vs.get("resolution"), list) else 448),
+               "--height", str(vs["resolution"][1] if isinstance(vs.get("resolution"), list) else 832),
+               "--prefix", prefix,
+               "--output-dir", str(tdir),
+               "--timeout", "1200"]
+        _log(project, f"transition {a_idx}→{b_idx}: {dur}s, audio from {slice_start:.2f}s")
+        rc = _run(cmd, log_path=project / "run.log",
+                  env_override=_comfy_env_for("flux"))  # flux comfy = parallel with main
+        if rc != 0:
+            _log(project, f"transition {a_idx}→{b_idx} failed (rc={rc})")
+            continue
+        cands = sorted(tdir.glob(f"{prefix}_*.mp4"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        if cands and cands[0] != out_mp4:
+            cands[0].rename(out_mp4)
+        _log(project, f"transition {a_idx}→{b_idx} done → {out_mp4.name}")
+
+
+def cmd_assemble(spec: dict, project: Path) -> None:
+    """Concat + overlay-audio inside ComfyUI via post.concat_videos.
+
+    Without transitions: each scene trimmed from frame 0 to duration_sec
+    (drops lipsync tail buffer). Hard cuts. Scene N+1's frame 0 lands at
+    sum(duration_1..N) = song timecode of its vocal phrase.
+
+    With transitions (video.transitions.enabled): interleaves scene/
+    transition/scene/... The scene flanking a transition gives up
+    dur/2 on that side (skip-front and/or trim-back). Each transition
+    adds `dur` seconds. Net change per boundary is zero, so the song
+    timeline stays locked regardless of how many transitions you use."""
+    scenes = spec.get("scenes", [])
+    n = len(scenes)
+    if n == 0:
+        sys.exit("spec has no scenes")
 
     song = project / "song.mp3"
     if not song.exists():
         sys.exit("song.mp3 missing — run `song` first")
 
     vs = spec.get("video") or {}
-    crossfade = float(vs.get("crossfade", 0.0))  # seconds; 0 = hard cut
-    ffmpeg = FFMPEG()
-    video_only = project / "scenes" / "_concat_video.mp4"
+    fps = int(vs.get("fps", 24))
+    tv = vs.get("transitions") or {}
+    trans_enabled = bool(tv.get("enabled"))
 
-    if crossfade > 0 and len(mp4s) > 1:
-        # Chain ffmpeg xfade across all scenes. Each xfade needs the offset at
-        # which the previous composite ends minus the fade duration.
-        durs = [_probe_duration(p) for p in mp4s]
-        inputs: list[str] = []
-        for p in mp4s:
-            inputs += ["-i", str(p)]
-        filter_parts: list[str] = []
-        last_label = "[0:v]"
-        running = durs[0]
-        for i in range(1, len(mp4s)):
-            offset = max(running - crossfade, 0)
-            nxt = f"[v{i}]"
-            filter_parts.append(
-                f"{last_label}[{i}:v]xfade=transition=fade:duration={crossfade}:offset={offset:.3f}{nxt}"
-            )
-            last_label = nxt
-            running = running + durs[i] - crossfade
-        filter_complex = ";".join(filter_parts)
-        cmd = [ffmpeg, "-y", *inputs,
-               "-filter_complex", filter_complex,
-               "-map", last_label, "-an",
-               "-c:v", "libx264", "-pix_fmt", "yuv420p",
-               "-preset", "veryfast", "-crf", "18", str(video_only)]
-        rc = subprocess.run(cmd, capture_output=True, text=True)
-        if rc.returncode != 0:
-            _log(project, f"xfade failed: {rc.stderr[-800:]}")
-            sys.exit("xfade video concat failed")
-    else:
-        concat_list = project / "scenes" / "_concat.txt"
-        concat_list.write_text("\n".join(f"file '{p.resolve()}'" for p in mp4s) + "\n")
-        cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
-               "-an",
-               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-               "-crf", "18", str(video_only)]
-        rc = subprocess.run(cmd, capture_output=True).returncode
-        concat_list.unlink(missing_ok=True)
-        if rc != 0:
-            sys.exit("video concat failed")
+    clip_paths: list[Path] = []
+    starts: list[float] = []
+    durations: list[float] = []
 
-    # Ensure the concatenated video is at least as long as the longest song
-    # variant. With N scenes × D duration and (N-1) crossfades of C seconds,
-    # the concat is (N*D - (N-1)*C) long — usually a bit shorter than the song.
-    # If so, extend the video by freezing the last frame so audio doesn't get
-    # cut off when we drop `-shortest` below.
-    video_dur = _probe_duration(video_only)
-    max_song_dur = max(_probe_duration(p) for (_, p) in
-                       [("final.mp4", song), *[(f"final_v{c.stem.replace('song_v','')}.mp4", c)
-                                               for c in sorted(project.glob("song_v*.mp3"))]])
-    if max_song_dur > video_dur + 0.25:
-        pad = max_song_dur - video_dur + 0.2  # small safety overshoot
-        padded = project / "scenes" / "_padded_video.mp4"
-        cmd = [ffmpeg, "-y", "-i", str(video_only),
-               "-vf", f"tpad=stop_mode=clone:stop_duration={pad:.3f}",
-               "-c:v", "libx264", "-pix_fmt", "yuv420p",
-               "-preset", "veryfast", "-crf", "18", str(padded)]
-        rc = subprocess.run(cmd, capture_output=True, text=True)
-        if rc.returncode != 0:
-            _log(project, f"tpad failed: {rc.stderr[-400:]}")
-            sys.exit("video tpad failed")
-        video_only.unlink(missing_ok=True)
-        video_only = padded
-        _log(project, f"video padded by {pad:.2f}s (clone last frame) "
-                      f"to cover {max_song_dur:.2f}s song")
+    for i, s in enumerate(scenes, 1):
+        stem = _scene_stem(i, s.get("label", "scene"))
+        p = project / "scenes" / f"{stem}.mp4"
+        if not p.exists():
+            sys.exit(f"scene {i} MP4 missing at {p} — run it first")
 
-    # Overlay the clean song audio onto the (now long-enough) video — one final
-    # mp4 per available song variant (final.mp4, final_v2.mp4, ...). We drop
-    # `-shortest` so the full audio track plays; the video tail may freeze
-    # briefly at the end which is preferable to cutting the song mid-outro.
-    song_variants = [("final.mp4", song)]
+        dur_in  = _transition_duration(spec, i - 1) if trans_enabled and i > 1 else 0.0
+        dur_out = _transition_duration(spec, i)      if trans_enabled and i < n else 0.0
+        skip_front = dur_in / 2.0
+        keep = float(s["duration_sec"]) - dur_in / 2.0 - dur_out / 2.0
+
+        clip_paths.append(p)
+        starts.append(skip_front)
+        durations.append(keep)
+
+        if trans_enabled and i < n and dur_out > 0:
+            nxt_stem = _scene_stem(i + 1, scenes[i].get("label", "scene"))
+            tp = project / "transitions" / f"{stem}__{nxt_stem}.mp4"
+            if not tp.exists():
+                sys.exit(f"transition {i}→{i+1} MP4 missing at {tp} — "
+                         f"run `transitions` pass first")
+            clip_paths.append(tp)
+            starts.append(0.0)
+            durations.append(dur_out)
+
+    song_variants = [("final", song)]
     for candidate in sorted(project.glob("song_v*.mp3")):
-        idx = candidate.stem.replace("song_v", "")
-        song_variants.append((f"final_v{idx}.mp4", candidate))
+        sidx = candidate.stem.replace("song_v", "")
+        song_variants.append((f"final_v{sidx}", candidate))
 
-    for out_name, song_path in song_variants:
-        final = project / out_name
-        cmd = [ffmpeg, "-y", "-i", str(video_only), "-i", str(song_path),
-               "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-               "-map", "0:v:0", "-map", "1:a:0",
-               "-t", f"{_probe_duration(song_path):.3f}",
-               str(final)]
-        rc = subprocess.run(cmd, capture_output=True).returncode
+    videos_csv = ",".join(str(p) for p in clip_paths)
+    trims_csv  = ",".join(f"{d:.3f}" for d in durations)
+    starts_csv = ",".join(f"{s:.3f}" for s in starts)
+
+    for prefix, song_path in song_variants:
+        cmd = ["python3", str(COMFY), "vconcat",
+               "--videos", videos_csv,
+               "--audio", str(song_path),
+               "--fps", str(fps),
+               "--trim-durations", trims_csv,
+               "--trim-starts", starts_csv,
+               "--prefix", prefix,
+               "--output-dir", str(project),
+               "--timeout", "1800"]
+        _log(project, f"assembling {prefix}.mp4 ({len(clip_paths)} clips"
+                      f"{', with transitions' if trans_enabled else ''}, "
+                      f"audio={song_path.name})")
+        rc = _run(cmd, log_path=project / "run.log",
+                  env_override=_comfy_env_for("video"))
         if rc != 0:
-            sys.exit(f"audio overlay failed for {out_name}")
-        _log(project, f"assembled → {final} ({final.stat().st_size//1024} KB)"
-                      + (f" with {crossfade}s crossfade" if crossfade > 0 else ""))
-    video_only.unlink(missing_ok=True)
+            sys.exit(f"assembly failed for {prefix}")
+        produced = sorted(project.glob(f"{prefix}_*.mp4"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+        final = project / f"{prefix}.mp4"
+        if produced and produced[0] != final:
+            produced[0].rename(final)
+        _log(project, f"assembled → {final} "
+                      f"({final.stat().st_size//1024 if final.exists() else '?'} KB)")
 
 
 def cmd_all(spec: dict, project: Path) -> None:
     _ensure_dirs(project)
     cmd_song(spec, project)
+
+    # Hard check: scene total must cover the longest song variant, otherwise
+    # the assembly will freeze-frame the tail for potentially minutes. Fail
+    # loudly BEFORE burning GPU time on the scenes.
+    # Final timeline is sum(duration_sec) — each scene's tail buffer is
+    # trimmed off during concat via GetImageRangeFromBatch, no crossfade.
+    assembled = sum(s["duration_sec"] for s in spec["scenes"])
+    longest_song = 0.0
+    for p in [project / "song.mp3", *sorted(project.glob("song_v*.mp3"))]:
+        if p.exists():
+            longest_song = max(longest_song, _probe_duration(p))
+    gap = longest_song - assembled
+    if gap > 3:                          # >3s of freeze-frame is the problem threshold
+        _log(project, f"⚠  song ({longest_song:.1f}s) is {gap:.1f}s LONGER "
+                      f"than assembled scenes ({assembled:.1f}s) — the tail "
+                      f"will freeze on the last frame for that duration.")
+        _log(project, f"   add ~{int(gap/12)+1} more scenes (at 12s each) or "
+                      f"extend existing durations up to 20s each, then rerun.")
+        sys.exit("aborting before scene generation — scene total too short for song.")
+
     for i in range(1, len(spec["scenes"]) + 1):
         cmd_scene(spec, project, i)
+    # Render transitions (no-op if video.transitions.enabled != true).
+    # Runs on COMFY_URL_FLUX so they parallelize with... well, here they run
+    # serially after scenes, but `transitions` can also be invoked standalone
+    # during the main batch on a second terminal.
+    cmd_transitions(spec, project)
     cmd_assemble(spec, project)
 
 
@@ -626,7 +817,7 @@ def cmd_status(spec: dict, project: Path) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(prog="music_video")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for c in ["plan", "song", "assemble", "all", "status"]:
+    for c in ["plan", "song", "assemble", "transitions", "all", "status"]:
         sp = sub.add_parser(c)
         sp.add_argument("spec")
     ss = sub.add_parser("scene")
@@ -641,6 +832,7 @@ def main() -> None:
     elif args.cmd == "song":    cmd_song(spec, project)
     elif args.cmd == "scene":   cmd_scene(spec, project, args.idx)
     elif args.cmd == "assemble":cmd_assemble(spec, project)
+    elif args.cmd == "transitions": cmd_transitions(spec, project)
     elif args.cmd == "all":     cmd_all(spec, project)
     elif args.cmd == "status":  cmd_status(spec, project)
 

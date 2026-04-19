@@ -36,7 +36,7 @@ Restart-safe: rerunning `all` skips anything already on disk. Iterate individual
 ## Script paths (absolute; no `~`)
 
 - Sandbox (default): `/home/sandbox/.openclaw/skills/music-video/scripts/music_video.py`
-- Host (main/zeus): `/home/venetanji/.openclaw/skills/music-video/scripts/music_video.py`
+- Host (main/zeus): `~/.openclaw/skills/music-video/scripts/music_video.py`
 
 The script is a `uv run --script` shebang — no manual deps needed; uv pulls `pyyaml` + `imageio-ffmpeg` on first run.
 

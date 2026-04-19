@@ -1,6 +1,6 @@
 # ComfyUI API Reference
 
-**Base URL:** `https://comfyui.tail9683c.ts.net`
+**Base URL:** `http://localhost:8188`
 **Version:** 0.17.0 | GPU: RTX 3080 Ti 12GB | PyTorch 2.10+cu130
 
 ---
@@ -30,7 +30,7 @@ Add `&_=<timestamp>` to bypass caching.
 ### POST /upload/image — Upload reference image
 ```bash
 curl -X POST -F "image=@photo.jpg" -F "type=input" -F "subfolder=" \
-  https://comfyui.tail9683c.ts.net/upload/image
+  http://localhost:8188/upload/image
 ```
 
 ---

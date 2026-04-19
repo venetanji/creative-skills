@@ -96,7 +96,7 @@ Or use the scripts directly — they all have shebangs (`#!/usr/bin/env python3`
 
 ## Host requirements
 
-- **ComfyUI** reachable at `COMFY_URL` (default `https://comfyui.tail9683c.ts.net`), with at minimum: Flux2, LTX-2.3 dev-fp8 + distilled LoRA + spatial upscaler, Qwen3 TTS. The LTX camera-control LoRAs are optional but recommended.
+- **ComfyUI** reachable at `COMFY_URL` (default `http://localhost:8188`), with at minimum: Flux2, LTX-2.3 dev-fp8 + distilled LoRA + spatial upscaler, Qwen3 TTS. The LTX camera-control LoRAs are optional but recommended.
 - **suno-mcp** reachable as an MCP server, invoked via `mcporter` configured in `~/.openclaw/config/mcporter.json`.
 - **uv** for the PEP 723 scripts (`video_join.py`, `music_video.py`, `frame_check.py`, `vram_monitor.py`). `apt install uv` / `brew install uv` / `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - Standard Python 3.10+. No other host-level deps — uv pulls `pyyaml`, `imageio-ffmpeg`, `Pillow`, `numpy` into ephemeral envs on first run.

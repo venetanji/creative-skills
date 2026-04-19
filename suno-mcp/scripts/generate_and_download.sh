@@ -8,7 +8,7 @@ TITLE="$3"
 INSTRUMENTAL="${4:-false}"
 CONFIG="${CONFIG:-$HOME/.openclaw/config/mcporter.json}"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.openclaw/workspace/outputs}"
-MCP_AUDIO_URL="http://suno-mcp.tail9683c.ts.net:8085/audio"
+MCP_AUDIO_URL="http://localhost:8085/audio"
 
 # Ensure output directory exists
 mkdir -p "$OUTPUT_DIR"
@@ -63,7 +63,7 @@ LOCAL_URL=$(echo "$DOWNLOAD_RESULT" | grep -oP 'Local URL:\s*\Khttp://[^[:space:
 
 if [ -n "$LOCAL_URL" ]; then
     # Replace 0.0.0.0 with actual hostname
-    AUDIO_URL=$(echo "$LOCAL_URL" | sed 's/0\.0\.0\.0/suno-mcp.tail9683c.ts.net/')
+    AUDIO_URL=$(echo "$LOCAL_URL" | sed 's/0\.0\.0\.0/localhost:8085/')
     echo "Found MCP URL: $AUDIO_URL" >&2
 else
     # Fallback: construct URL from song_id

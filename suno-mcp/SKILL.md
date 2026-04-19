@@ -179,4 +179,4 @@ Suno always generates **two song variants** from a single request. Both are equa
 
 ## MCP Config
 
-`~/.openclaw/config/mcporter.json` — Server: `https://suno-mcp.tail9683c.ts.net/mcp`
+`~/.openclaw/config/mcporter.json` — Server: `https://localhost:8085/mcp`

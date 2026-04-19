@@ -2,7 +2,7 @@
 name: comfyui
 description: >
   Generate images and videos using ComfyUI workflows via direct REST API at
-  https://comfyui.tail9683c.ts.net. Also manages character reference image downloads
+  http://localhost:8188. Also manages character reference image downloads
   from HuggingFace. Use when asked to create images, edit photos, generate videos,
   or run Flux/LTX2/Wan workflows. Triggers on: generate an image, create a video,
   Flux2, ComfyUI, text-to-image, image-to-image, image-to-video, character image,
@@ -13,14 +13,14 @@ description: >
 
 Direct ComfyUI REST API access for image and video generation.
 
-**ComfyUI:** https://comfyui.tail9683c.ts.net | **RTX 3090 24GB** | v0.16.1
+**ComfyUI:** http://localhost:8188 | **RTX 3090 24GB** | v0.16.1
 
 ## Script paths (use absolute; tilde expansion is unreliable under `exec`)
 
 | Where you're running | Path to use |
 |---|---|
 | Inside the sandbox (most agents) | `/home/sandbox/.openclaw/skills/comfyui/scripts/…` |
-| On the host (main, zeus) | `/home/venetanji/.openclaw/skills/comfyui/scripts/…` |
+| On the host (main, zeus) | `~/.openclaw/skills/comfyui/scripts/…` |
 
 `~/.openclaw/skills/…` works in an interactive shell but NOT always in the `exec` tool — use the absolute form so the first call succeeds.
 
@@ -239,7 +239,7 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 - `--fast` *(video only: t2v/i2v/ia2v/flf2v)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
 
 ### Environment variables
-- `COMFY_URL` — ComfyUI server URL (default: `https://comfyui.tail9683c.ts.net`)
+- `COMFY_URL` — ComfyUI server URL (default: `http://localhost:8188`)
 - `OPENCLAW_NOTIFY_TARGET` — default notification target
 
 ## Architecture
@@ -282,7 +282,7 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 Your job after the exec returns:
 
 1. Parse the `saved: …` line from the output.
-2. Translate sandbox → host path: `/workspace/…` → `/home/venetanji/.openclaw/workspace-<agent>/…` (the `message` tool resolves paths on the host).
+2. Translate sandbox → host path: `/workspace/…` → `~/.openclaw/workspace-<agent>/…` (the `message` tool resolves paths on the host).
 3. Send with the `message` tool's `media` arg.
 
 ```bash
@@ -298,7 +298,7 @@ message({
   action: "send",
   channel: "discord",
   to: "<channel_id>",
-  media: "/home/venetanji/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
+  media: "~/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
   message: "Here's your image."
 })
 ```
@@ -313,7 +313,7 @@ Blocking exec is fine for **images (< 30s)** and **short TTS**. For **video** (L
 
 ```
 sessions_spawn({
-  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is /home/venetanji/.openclaw/workspace-<agent>/outputs/<file>.",
+  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is ~/.openclaw/workspace-<agent>/outputs/<file>.",
   runtime: "subagent",
   sandbox: "inherit",
   mode: "run"
