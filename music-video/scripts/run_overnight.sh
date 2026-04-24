@@ -6,7 +6,7 @@ proj="${1:?usage: run_overnight.sh <project_dir>}"
 proj="$(realpath "$proj")"
 cd "$proj"
 
-SKILL=${HOME}/.openclaw/skills/music-video/scripts
+SKILL=/home/venetanji/.openclaw/skills/music-video/scripts
 LOG="$proj/run_overnight.log"
 VRAM="$proj/vram.jsonl"
 

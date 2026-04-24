@@ -21,6 +21,19 @@ Complete field list. All fields except `title`, `style`, and `scenes` are option
 | `fps` | 24 | Frame rate for every scene. |
 | `resolution` | `[1024, 576]` | `[width, height]`. 768×512 is faster; 1280×720 is slower but sharper. |
 | `negative` | (none) | Negative prompt, applied to every scene. Good default: `"pc game, cartoon, modern tech, text, watermark, ugly, blurry"`. |
+| `tail_buffer_sec` | 0.0 | Extra seconds appended to lipsync scene renders; trimmed off at assemble. Gives LTX audio lookhead to close the phoneme. Only applied when the scene has an `anchor:` block. |
+| `transitions` | (off) | Sub-object — see below. Opt-in per-boundary LTX morph clips between adjacent scenes. |
+
+### `video.transitions` (all optional; whole block optional)
+
+| Field | Default | Notes |
+|---|---|---|
+| `enabled` | `false` | Master switch. When true, `transitions` stage renders a clip per boundary and `assemble` splices it in. |
+| `duration` | 4.0 | Seconds per transition clip. Shape: `guide_sec` A-guide + middle-morph + `guide_sec` B-guide. |
+| `guide_sec` | 1.0 | Length of the real-video guide taken from each side. Middle = `duration - 2*guide_sec` is masked-latent morph. |
+| `fps` | 24 | Frame rate for transition clips. Usually match the scene fps. |
+| `default_b_sparse` | `"96"` | B-side guide shape. `"96"` = 1 single anchor frame at the tail (smooth, default). `"72,80,88,96"` = 4 sparse anchors (use into singing / lipsync scenes for stronger identity carryover). Never use contiguous multi-frame blocks — they freeze at the snap-in. |
+| `prompt` | generic morph | Default prompt for the transition itself. Can be overridden per boundary. |
 
 ## `suno`
 
@@ -34,9 +47,15 @@ Complete field list. All fields except `title`, `style`, and `scenes` are option
 |---|---|---|
 | `label` | yes | Short identifier, used in filenames. Safe chars only (`a-zA-Z0-9_-`). |
 | `start_sec` | yes | Seconds into the song where this scene's audio slice begins. |
-| `duration_sec` | yes | Scene length. `start_sec + duration_sec` determines where the audio slice ends. |
+| `duration_sec` | yes | Scene length. `start_sec + duration_sec` determines where the audio slice ends. Max ~15s per scene (LTX-2.3 OOMs past ~20s at portrait resolutions). |
 | `prompt` | yes | Video prompt for ia2v. Describes what's visible — not story. Favor single-take shots. |
 | `image` | no (defaults to `@last`) | `@anchor` = use top-level anchor_image. `@last` = use previous scene's last frame. Literal path = use that specific file. |
+| `camera_lora` | no | LoRA name (`dolly-in`/`dolly-out`/`dolly-left`/`dolly-right`/`jib-up`/`jib-down`/`static`) or full `.safetensors` filename. Pair with a matching prose description of the move in `prompt`. |
+| `camera_lora_strength` | no | Default 0.8. |
+| `fast` | no | Skip the refine pass. Half wall time, half resolution. Use for iteration. |
+| `anchor` | no | Sub-block for flux2 pre-render of this scene's anchor PNG. Keys: `type: t2i \| i2i \| i2i2 \| i2iN`, `prompt`, `reference`/`references`, `width`, `height`, `steps`. Without an `anchor` block, `@anchor` uses the top-level `anchor_image`. See `storyboard` skill for the anchor design pattern. |
+| `guides` | no | List of mid-scene keyframe guides. Each entry: `image` (literal path / `@anchor` / `@last`) + **one of** `at_sec` (float seconds) / `at_relative` (0..1 of shot duration) / `at_frame` (LTX latent frame, snapped to 8) + optional `strength` (default 1.0). When present, routes to LTX multiguide instead of plain ia2v. Use when the scene's first frame doesn't show the character, or to anchor identity through long shots (≥13s). |
+| `transition_from_prev` | no | Per-boundary override for the incoming edge. Keys: `duration` (float), `b_sparse` (string `"96"` / `"72,80,88,96"` or list of ints), `prompt` (string). Only applied when `video.transitions.enabled: true`. |
 
 ## Timing
 

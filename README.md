@@ -1,19 +1,24 @@
 # creative-skills
 
-Three composable [AgentSkills](https://agentskills.ai/) that build on each other so an agent can take a text description and produce a finished music video. Designed for agents running under [OpenClaw](https://openclaw.ai/), but the scripts are standalone and work on any Linux host with a reachable ComfyUI server.
+Five composable [AgentSkills](https://agentskills.ai/) that build on each other so an agent can take a text description and produce a finished music video or dialogue-driven drama clip. Designed for agents running under [OpenClaw](https://openclaw.ai/), but the scripts are standalone and work on any Linux host with a reachable ComfyUI server.
 
 ```
  prompt ─┐                                                           ┌─► suno song (.mp3, both variants)
          ├─ suno-mcp ────────────────────────────────────────────────┘
- YAML ───┼─ music-video ──┐
+ YAML ───┼─ music-video ──┐   (song-first, bar-aligned)
+         │                │
          │                ├─► per-scene flux2 anchor (.png)  ─┐
-         ├─ comfyui ──────┤                                   ├─► ia2v → scene.mp4
+         ├─ storyboard ───┤   (shared: anchors + multi-guide) │
+         │                │                                   ├─► LTX ia2v / multiguide → scene.mp4
+         ├─ comfyui ──────┤                                   │    + cross-scene LTX transition clips
          │                └─► per-scene audio slice (.mp3)    ┘
+         │
+         └─ drama-video ──► dialogue-first shots (ElevenLabs audio + LTX ia2v)
          │
          └──────────────► ffmpeg assemble → final.mp4(+v2,v3,…)
 ```
 
-## The three skills
+## The skills
 
 ### [`comfyui/`](comfyui/) — direct ComfyUI REST access
 
@@ -28,6 +33,10 @@ python3 scripts/comfy_graph.py t2v   --prompt "..."  --seconds 10        # LTX-2
 python3 scripts/comfy_graph.py i2v   --image ref.png --prompt "..."      # LTX-2.3 image-to-video
 python3 scripts/comfy_graph.py ia2v  --image ref.png --audio a.mp3 ...   # LTX-2.3 audio-reactive video
 python3 scripts/comfy_graph.py flf2v --first a.png --last b.png ...      # LTX-2.3 first-last-frame
+python3 scripts/comfy_graph.py multiguide  --guides a.png,b.png,c.png \
+        --frame_indices 0,96,168  --strengths 1.0,1.0,1.0 ...            # LTX-2.3 N-anchor chain
+python3 scripts/comfy_graph.py transition  --prev_video a.mp4 \
+        --next_video b.mp4  --audio slice.mp3 ...                        # LTX-2.3 song-aligned morph
 python3 scripts/comfy_graph.py tts   --text "..."                        # Qwen3 TTS
 ```
 
@@ -53,17 +62,35 @@ python3 scripts/generate_song.py \
 
 `references/style-guide.md` and `references/lyrics-guide.md` are the source of truth for how to write suno prompts. The short version: **describe sound qualities, don't name artists** (suno filters those), and write lyrics with `[Verse]/[Chorus]/[Bridge]/[Instrumental]` section tags on their own lines.
 
-### [`music-video/`](music-video/) — full pipeline orchestrator
+### [`storyboard/`](storyboard/) — shared anchors + multi-guide resolver
 
-A YAML-driven orchestrator that composes the other two. One YAML describes a full music video; one command runs it end-to-end.
+Shared toolkit used by both `music-video` and `drama-video` so prompt conventions and multi-guide scene design are identical across the two. The trap it fixes: passing a raw character *sheet* PNG as the ia2v first frame bakes the sheet's neutral-backdrop lighting into every scene. `storyboard` owns the `i2i` / `i2i2` / `i2iN` / `angles` patterns that produce shot-specific anchors — character *in* the scene's setting, not laid on top of it.
+
+`lib/guides.py` is the resolver that turns a yaml `guides:` list into frame-indexed `LTXVAddGuide` chains. Music-video and drama-video both delegate their multi-guide scenes to it, so the yaml format is the same:
+
+```yaml
+guides:
+  - image: "@anchor"            # @anchor / @last / literal path
+    at_relative: 0.5            # or at_sec / at_frame
+    strength: 1.0
+```
+
+Use when the scene's first frame can't show the character (opens on a prop or landscape), or for long shots (≥13s) where single-anchor ia2v drifts by the tail.
+
+### [`music-video/`](music-video/) — song-first pipeline orchestrator
+
+A YAML-driven orchestrator that composes the other skills. One YAML describes a full music video; one command runs it end-to-end.
 
 ```bash
-scripts/music_video.py plan     <spec.yaml>     # validate + show scene breakdown + warn on song/scene length mismatches
-scripts/music_video.py song     <spec.yaml>     # suno only (saves all variants as song.mp3 + song_v2.mp3 + ...)
-scripts/music_video.py scene N  <spec.yaml>     # one scene: flux2 anchor (t2i/i2i/i2i2/angles) → LTX ia2v
-scripts/music_video.py assemble <spec.yaml>     # ffmpeg concat (optional xfade) + clean song audio overlay
-scripts/music_video.py all      <spec.yaml>     # end-to-end, restart-safe
-scripts/music_video.py status   <spec.yaml>     # what's already on disk
+scripts/music_video.py plan        <spec.yaml>   # validate + show scene breakdown + warn on song/scene length mismatches
+scripts/music_video.py song        <spec.yaml>   # suno only (saves all variants as song.mp3 + song_v2.mp3 + ...)
+scripts/music_video.py anchors     <spec.yaml>   # flux2 top-level + per-scene anchors (idempotent)
+scripts/music_video.py scene N     <spec.yaml>   # one scene: flux2 anchor → LTX ia2v (or multiguide if `guides:` set)
+scripts/music_video.py scenes      <spec.yaml>   # every scene in sequence
+scripts/music_video.py transitions <spec.yaml>   # per-boundary LTX morph clips (opt-in via video.transitions.enabled)
+scripts/music_video.py assemble    <spec.yaml>   # ffmpeg concat + clean song audio overlay (splices in transitions)
+scripts/music_video.py all         <spec.yaml>   # end-to-end with two quality gates, restart-safe
+scripts/music_video.py status      <spec.yaml>   # what's already on disk
 ```
 
 Per-scene anchor types (bypasses the `@last` drift problem when chaining scenes):
@@ -72,7 +99,17 @@ Per-scene anchor types (bypasses the `@last` drift problem when chaining scenes)
 - `i2i2` — **two references blended** (character + setting for placed-in-world shots)
 - `angles` — multi-prompt batch (multiple compositions from one reference; first is used as the anchor)
 
+Scene-boundary options:
+- **Hard cut** (default) — just concat; fast; fine if the scene prompts change hard.
+- **LTX transitions** (`video.transitions.enabled: true`) — per-boundary morph clip using real video frames from both sides as `LTXVAddGuide` conditioning + a masked middle driven by the song audio. Defaults to a 4s clip shape `1s A-guide / 2s masked morph / 1s B-head`. Per-boundary `transition_from_prev` overrides `duration`, `prompt`, and `b_sparse` (B-side anchor shape: `"96"` = 1f, `"72,80,88,96"` = 4f for singing scenes).
+
 Plus `run_overnight.sh` which wraps `all` with a VRAM monitor + per-boundary stitch-similarity report (`frame_check.py`). See [`music-video/SKILL.md`](music-video/SKILL.md) for the full YAML schema and prompting recipe; [`references/example.yaml`](music-video/references/example.yaml) is the full annotated example.
+
+### [`drama-video/`](drama-video/) — dialogue-first sibling
+
+Same LTX ia2v engine as `music-video`, but the primary axis is dialogue cues (from ElevenLabs) instead of song bars. Shots align to per-line timestamps from the audio; cuts happen at pauses and line starts. `continue_from_prev: true` on a shot uses the previous shot's tail frames as a multi-frame `LTXVAddGuide` so same-space shots flow seamlessly without a cut.
+
+Use `drama-video` when the piece is dialogue + ambience; use `music-video` when it's song-driven (even if there's dialogue over it — add dialogue as a per-scene `audio:` override in the music-video spec).
 
 ## How they compose
 
@@ -86,10 +123,10 @@ These are AgentSkill directories. Drop them wherever your runtime expects skills
 
 ```bash
 # OpenClaw global (read-only, shared across all agents):
-cp -r comfyui suno-mcp music-video ~/.openclaw/skills/
+cp -r comfyui suno-mcp storyboard music-video drama-video ~/.openclaw/skills/
 
 # OpenClaw per-agent (workspace-scoped):
-cp -r comfyui suno-mcp music-video /path/to/agent/workspace/skills/
+cp -r comfyui suno-mcp storyboard music-video drama-video /path/to/agent/workspace/skills/
 ```
 
 Or use the scripts directly — they all have shebangs (`#!/usr/bin/env python3` or `#!/usr/bin/env -S uv run --script` where a dependency is needed).

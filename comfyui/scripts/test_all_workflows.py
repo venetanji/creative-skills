@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import comfy_graph as cg
 
-BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
+BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
 OUTPUT_DIR = Path("test_outputs")
 RESULTS_FILE = Path("test_results.json")
 SKIP_SECOND_PASS = "--skip-second-pass" in sys.argv

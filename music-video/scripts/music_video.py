@@ -77,8 +77,27 @@ from __future__ import annotations
 import argparse, json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
-import yaml
-from imageio_ffmpeg import get_ffmpeg_exe
+# Lazy imports for pyyaml + imageio_ffmpeg. These are heavy deps that
+# only some subcommands need — `init` just writes a text skeleton and
+# should work on any minimal sandbox with stock python3 (no uv, no
+# pip-installed packages). Call sites use `_require_yaml()` /
+# `_require_ffmpeg()` to get the module and fail with a helpful error
+# message if it's missing.
+def _require_yaml():
+    try:
+        import yaml
+        return yaml
+    except ImportError:
+        sys.exit("pyyaml not installed. Install with: pip install pyyaml, "
+                 "or run this script via `uv run --script`.")
+
+def _require_ffmpeg():
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+        return get_ffmpeg_exe
+    except ImportError:
+        sys.exit("imageio_ffmpeg not installed. Install with: "
+                 "pip install imageio-ffmpeg, or run via `uv run --script`.")
 
 
 # ---------- paths & helpers ----------
@@ -91,7 +110,8 @@ COMFY = SKILLS_ROOT / "comfyui" / "scripts" / "comfy_graph.py"
 SUNO  = SKILLS_ROOT / "suno-mcp" / "scripts" / "generate_song.py"
 VIDEO_JOIN = SKILLS_ROOT / "comfyui" / "scripts" / "video_join.py"
 
-FFMPEG = get_ffmpeg_exe
+def FFMPEG():
+    return _require_ffmpeg()()
 
 
 def _log(project: Path, msg: str) -> None:
@@ -143,8 +163,128 @@ def _load_spec(yaml_path: str) -> tuple[dict, Path]:
     p = Path(yaml_path).resolve()
     if not p.exists():
         sys.exit(f"spec not found: {p}")
-    spec = yaml.safe_load(p.read_text())
+    spec = _require_yaml().safe_load(p.read_text())
+    _fill_scene_start_sec(spec)
     return spec, p.parent  # project dir = dir containing the yaml
+
+
+def _fill_scene_start_sec(spec: dict) -> None:
+    """Auto-derive `start_sec` for scenes that omit it — cumulative sum of
+    prior durations. Lets the agent write scenes as a flat sequential list
+    with only `duration_sec`."""
+    scenes = spec.get("scenes") or []
+    cursor = 0.0
+    for s in scenes:
+        if "start_sec" not in s:
+            s["start_sec"] = cursor
+        cursor = float(s["start_sec"]) + float(s.get("duration_sec", 0))
+
+
+# Default workspace root used by `init`. Matches the canonical path
+# convention documented in /home/venetanji/CLAUDE.md — projects live at
+# /home/venetanji/.openclaw/workspace/<slug>/. Inside the sandbox the agent
+# When sandboxed, the agent's workspace is bind-mounted at `/workspace`,
+# so prefer that if it exists (writable). Otherwise fall back to the host
+# path. Overrideable via MV_WORKSPACE_ROOT env var for odd setups.
+def _default_workspace_root() -> Path:
+    override = os.environ.get("MV_WORKSPACE_ROOT")
+    if override:
+        return Path(override).resolve()
+    if os.path.isdir("/workspace") and os.access("/workspace", os.W_OK):
+        return Path("/workspace")
+    return Path("/home/venetanji/.openclaw/workspace")
+
+DEFAULT_WORKSPACE_ROOT = _default_workspace_root()
+
+
+SKELETON_YAML_TEMPLATE = """# Music-video project: {slug}
+# Edit this file: fill title / style / lyrics, then run:
+#   music_video.py song {slug_yaml}
+# After the song is picked, add scenes and run the rest of the pipeline.
+{theme_block}
+# TODO: fill title
+title: "{default_title}"
+
+# TODO: producer-style brief. See suno-mcp style-guide:
+#   ~/.openclaw/skills/suno-mcp/references/style-guide.md
+# Single prose sentence covering genre, BPM, instruments, production, vocal, mood.{theme_style_hint}
+style: "TODO"
+
+# TODO: lyrics using [Verse]/[Chorus]/[Bridge] tags, one line per phrase,
+# no mid-line punctuation. See lyrics-guide:
+#   ~/.openclaw/skills/suno-mcp/references/lyrics-guide.md{theme_lyrics_hint}
+lyrics: |
+  [Verse]
+  TODO
+
+suno:
+  runs: 3  # how many suno calls; each returns 2 variants -> runs*2 total mp3s
+
+video:
+  fps: 24
+  resolution: [1024, 576]
+  negative: "cartoon, text, watermark, distorted face, still frame, facial hair on woman, beard on woman"
+  tail_buffer_sec: 0.5
+  transitions:
+    enabled: false
+
+anchor_image: anchor.png
+
+# Quality-check gates — the `all` pipeline stops after song/anchors so a
+# human (or agent) can review before the next expensive phase. Flip to
+# false to fully automate (or pass --no-gate on the CLI).
+gate_confirm_song: true
+gate_confirm_anchors: true
+
+# TODO: add scenes AFTER the song is confirmed. Each scene:
+#   - label: short_id
+#     start_sec: 0
+#     duration_sec: 8
+#     prompt: "what is on screen — continuous shot"
+#     image: "@anchor"  # @anchor | @last | path/to/img
+scenes: []
+"""
+
+
+def cmd_init(slug: str, theme: str | None, force: bool) -> None:
+    """Create a new project skeleton under DEFAULT_WORKSPACE_ROOT/<slug>/."""
+    if not slug or "/" in slug or slug.startswith("."):
+        sys.exit(f"invalid slug: {slug!r} (no slashes, no leading dot)")
+    project = DEFAULT_WORKSPACE_ROOT / slug
+    yaml_path = project / "song.yaml"
+
+    if project.exists() and not force:
+        sys.exit(f"project already exists: {project} (pass --force to overwrite)")
+
+    project.mkdir(parents=True, exist_ok=True)
+
+    default_title = slug.replace("-", " ").replace("_", " ").title()
+    theme_block = ""
+    theme_style_hint = ""
+    theme_lyrics_hint = ""
+    if theme:
+        theme_clean = theme.replace('"', "'")
+        theme_block = f'#\n# Theme: {theme_clean}\n'
+        theme_style_hint = f"\n# Theme context: {theme_clean}"
+        theme_lyrics_hint = f"\n# Theme context: {theme_clean}"
+
+    content = SKELETON_YAML_TEMPLATE.format(
+        slug=slug,
+        slug_yaml=str(yaml_path),
+        default_title=default_title,
+        theme_block=theme_block,
+        theme_style_hint=theme_style_hint,
+        theme_lyrics_hint=theme_lyrics_hint,
+    )
+    yaml_path.write_text(content)
+
+    print(f"created {project}/")
+    print(f"  song.yaml (skeleton)")
+    if theme:
+        print(f"  theme: {theme}")
+    print()
+    print(f"next: edit {yaml_path} (title, style, lyrics),")
+    print(f"      then run: music_video.py song {yaml_path}")
 
 
 def _scene_stem(idx: int, label: str) -> str:
@@ -164,12 +304,32 @@ def _video_spec(spec: dict) -> dict:
         "fps": int(v.get("fps", 24)),
         "width": int(w), "height": int(h),
         "negative": v.get("negative"),
+        "tail_buffer_sec": float(v.get("tail_buffer_sec", 0.0) or 0.0),
     }
 
 
 # ---------- subcommands ----------
 
-MAX_SCENE_DURATION = 20.0   # LTX OOMs at portrait resolutions past ~20s per scene
+# Hard ceiling on per-scene duration. Empirically, LTX-2.3 at portrait
+# resolutions (e.g. 448×832) runs ~quadratic in length: a 12s clip
+# completes in ~6-8 min, a 20s clip took ~37 min and OOM-killed the comfy
+# server (which also drops the rest of the queue). Cap at 12s and split
+# longer scenes into chained shots if you need more runtime.
+MAX_SCENE_DURATION = 15.0
+
+
+# Simple {name} → description substitution driven by a top-level `subjects:`
+# block in the yaml. Lets prompts reference recurring characters by short
+# token (e.g. `{snakebird}`) and keep their canonical body description in
+# one place. Unknown tokens pass through untouched so literal curly braces
+# in prompts don't break. Applied to every scene.prompt and anchor.prompt.
+def _expand_subjects(text: str, spec: dict) -> str:
+    subjects = spec.get("subjects") or {}
+    if not subjects or not isinstance(text, str):
+        return text
+    for name, desc in subjects.items():
+        text = text.replace("{" + str(name) + "}", str(desc))
+    return text
 
 
 def cmd_plan(spec: dict, project: Path) -> None:
@@ -221,22 +381,22 @@ def cmd_plan(spec: dict, project: Path) -> None:
               f"{s.get('image','@last'):8}  {s['prompt'][:60]}")
 
 
-def cmd_song(spec: dict, project: Path) -> None:
-    out_mp3 = project / "song.mp3"
-    meta_path = project / "song_meta.json"
-    if out_mp3.exists() and meta_path.exists():
-        _log(project, f"song already exists at {out_mp3}, skipping")
-        return
+def _next_variant_slot(project: Path) -> int:
+    """Return the next free v-index for song_vN.mp3 (smallest N >= 2 not in use)."""
+    used = set()
+    for p in project.glob("song_v*.mp3"):
+        stem = p.stem.replace("song_v", "")
+        if stem.isdigit():
+            used.add(int(stem))
+    n = 2
+    while n in used:
+        n += 1
+    return n
 
-    title = spec.get("title") or "Untitled"
-    style = spec.get("style") or ""
-    lyrics = spec.get("lyrics") or ""
-    instrumental = bool((spec.get("suno") or {}).get("make_instrumental", False))
 
-    if not style:
-        sys.exit("spec.style is required for suno generation")
-
-    _log(project, f"generating song '{title}' via suno-mcp (up to 400s)…")
+def _run_suno_once(title: str, style: str, lyrics: str, instrumental: bool) -> dict:
+    """Invoke the suno-mcp generator once. Returns the parsed meta dict.
+    Each call yields 2 variants in meta['local_files']."""
     cmd = ["python3", str(SUNO),
            "--title", title, "--tags", style,
            "--timeout", "400"]
@@ -249,27 +409,109 @@ def cmd_song(spec: dict, project: Path) -> None:
     if proc.returncode != 0:
         sys.exit(f"suno failed:\n{proc.stderr}\n{proc.stdout}")
 
-    # Last JSON blob in stdout is the result (script prints progress then JSON)
     out = proc.stdout.strip()
     try:
-        # Find first '{' that opens valid JSON at end
         brace = out.rfind("{")
         meta = json.loads(out[brace:]) if brace >= 0 else {}
     except json.JSONDecodeError:
         meta = {"raw": out}
+    return meta
 
-    local = meta.get("local_file")
-    if not local or not Path(local).exists():
-        sys.exit(f"suno did not produce a local_file; meta={meta}")
-    shutil.copy(local, out_mp3)
-    # Suno always returns 2 variants — copy the extras as song_v2.mp3, song_v3.mp3, ...
-    for i, extra in enumerate(meta.get("local_files", [])[1:], start=2):
-        if extra and Path(extra).exists():
-            dst = project / f"song_v{i}.mp3"
-            shutil.copy(extra, dst)
-            _log(project, f"variant {i} saved: {dst.name} ({dst.stat().st_size//1024} KB)")
-    meta_path.write_text(json.dumps(meta, indent=2))
-    _log(project, f"song saved: {out_mp3} ({out_mp3.stat().st_size//1024} KB)")
+
+def cmd_song(spec: dict, project: Path) -> None:
+    """Generate N suno runs (spec.suno.runs; default 1). Each run returns 2
+    variants. The very first variant of the first run is saved as song.mp3;
+    all other variants are saved as song_v2.mp3, song_v3.mp3, ... in the
+    order they're produced. Restart-safe: if song.mp3 already exists, counts
+    existing song_v*.mp3 and issues only the remaining runs."""
+    out_mp3 = project / "song.mp3"
+    meta_path = project / "song_meta.json"
+
+    title = spec.get("title") or "Untitled"
+    style = spec.get("style") or ""
+    lyrics = spec.get("lyrics") or ""
+    instrumental = bool((spec.get("suno") or {}).get("make_instrumental", False))
+    runs_wanted = int((spec.get("suno") or {}).get("runs", 1))
+
+    # suno.runs: 0 means "use hand-placed song.mp3, don't call suno at all"
+    # — honored only when song.mp3 actually exists on disk (otherwise fall
+    # through and report the missing-style error or proceed with defaults).
+    if runs_wanted <= 0:
+        if out_mp3.exists():
+            _log(project, "suno.runs: 0 — using existing song.mp3, skipping generation")
+            return
+        _log(project, "suno.runs: 0 but no song.mp3 — forcing 1 run")
+        runs_wanted = 1
+
+    if not style:
+        sys.exit("spec.style is required for suno generation")
+
+    # Each run yields 2 variants → total variants = runs_wanted * 2.
+    # Existing count: song.mp3 (1 if present) + number of song_v*.mp3.
+    existing_variants = (1 if out_mp3.exists() else 0) + len(list(project.glob("song_v*.mp3")))
+    target_total = runs_wanted * 2
+    if existing_variants >= target_total:
+        _log(project, f"song already has {existing_variants}/{target_total} variants, skipping")
+        return
+
+    runs_done = existing_variants // 2
+    runs_remaining = runs_wanted - runs_done
+    _log(project, f"suno: {runs_done}/{runs_wanted} runs done, "
+                  f"{runs_remaining} remaining ({existing_variants} variants on disk)")
+
+    all_meta: list[dict] = []
+    # Load any prior meta so we can accumulate across restarts.
+    if meta_path.exists():
+        try:
+            prior = json.loads(meta_path.read_text())
+            if isinstance(prior, list):
+                all_meta = prior
+            elif isinstance(prior, dict):
+                all_meta = [prior]
+        except json.JSONDecodeError:
+            pass
+
+    saved_files: list[str] = [str(out_mp3)] if out_mp3.exists() else []
+    for p in sorted(project.glob("song_v*.mp3"),
+                    key=lambda q: int(q.stem.replace("song_v", "") or "0")):
+        saved_files.append(str(p))
+
+    for r in range(runs_remaining):
+        run_idx = runs_done + r + 1
+        _log(project, f"generating song '{title}' via suno-mcp — run {run_idx}/{runs_wanted}")
+        meta = _run_suno_once(title, style, lyrics, instrumental)
+        all_meta.append(meta)
+
+        variants = meta.get("local_files") or (
+            [meta["local_file"]] if meta.get("local_file") else [])
+        if not variants:
+            sys.exit(f"suno run {run_idx} produced no local_files; meta={meta}")
+
+        for v in variants:
+            if not v or not Path(v).exists():
+                _log(project, f"warning: suno returned missing file {v!r}")
+                continue
+            if not out_mp3.exists():
+                shutil.copy(v, out_mp3)
+                saved_files.append(str(out_mp3))
+                _log(project, f"song saved: {out_mp3.name} "
+                              f"({out_mp3.stat().st_size//1024} KB)")
+            else:
+                slot = _next_variant_slot(project)
+                dst = project / f"song_v{slot}.mp3"
+                shutil.copy(v, dst)
+                saved_files.append(str(dst))
+                _log(project, f"variant {slot} saved: {dst.name} "
+                              f"({dst.stat().st_size//1024} KB)")
+
+        # Write accumulated meta after each run so a crash mid-batch doesn't
+        # lose the provenance of completed runs.
+        meta_path.write_text(json.dumps({
+            "runs": all_meta,
+            "saved_files": saved_files,
+        }, indent=2))
+
+    _log(project, f"suno done: {len(saved_files)} variant(s) on disk")
 
 
 def _slice_song(project: Path, scene: dict, stem: str,
@@ -350,7 +592,7 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
     # invents a new-looking person every scene → drift + gender swap + the
     # "my face is degrading" problem. Prompt authors can skip this by
     # adding `keep_identity: false` to the anchor block.
-    anchor_prompt = anchor_cfg["prompt"]
+    anchor_prompt = _expand_subjects(anchor_cfg["prompt"], spec)
     if anchor_type in ("i2i", "i2i2") and anchor_cfg.get("keep_identity", True):
         id_guard = (" Keep the exact same person from the reference image: "
                     "same face shape, facial features, eye shape and color, "
@@ -410,6 +652,85 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
     return str(anchor_path)
 
 
+def cmd_anchors(spec: dict, project: Path) -> None:
+    """Generate anchor images ahead of scene rendering.
+
+    Two kinds of anchors:
+      1. Top-level `anchor_image` (e.g. `anchor.png`) — generated via flux2
+         t2i from `spec.anchor_prompt` (or, as a fallback, from title + style).
+         Only created if the file is missing.
+      2. Per-scene anchors — any scene with an `anchor:` block gets its
+         flux2 t2i / i2i / i2i2 / angles rendered into
+         scenes/NNN-label-anchor.png.
+
+    Restart-safe and idempotent — skips anchors already on disk."""
+    _ensure_dirs(project)
+    generated = 0
+    skipped = 0
+
+    # --- top-level anchor ---
+    anchor_name = spec.get("anchor_image")
+    if anchor_name:
+        anchor_path = (project / anchor_name).resolve()
+        if anchor_path.exists():
+            _log(project, f"anchor_image already exists: {anchor_path.name}")
+            skipped += 1
+        else:
+            prompt = spec.get("anchor_prompt")
+            if not prompt:
+                title = spec.get("title", "")
+                style = spec.get("style", "")
+                prompt = (f"{title}. {style}" if title or style else
+                          "a cinematic music-video key frame, atmospheric lighting")
+            vs = _video_spec(spec)
+            w = int(vs["width"])
+            h = int(vs["height"])
+            prefix = anchor_path.stem   # e.g. "anchor"
+            cmd = ["python3", str(COMFY), "t2i",
+                   "--prompt", prompt,
+                   "--width",  str(w),
+                   "--height", str(h),
+                   "--prefix", prefix,
+                   "--output-dir", str(project),
+                   "--timeout", "600"]
+            _log(project, f"generating top-level anchor → {anchor_path.name} "
+                          f"via flux2 t2i")
+            rc = _run(cmd, log_path=project / "run.log",
+                      env_override=_comfy_env_for("flux"))
+            if rc != 0:
+                sys.exit("top-level anchor generation failed")
+            candidates = sorted(project.glob(f"{prefix}_*.png"),
+                                key=lambda p: p.name)
+            if not candidates:
+                # flux2 may also drop .png without the _NNNNN_ suffix depending
+                # on comfy settings; check bare name too.
+                if anchor_path.exists():
+                    generated += 1
+                else:
+                    sys.exit(f"anchor t2i produced no PNG matching {prefix}_*.png")
+            else:
+                candidates[0].rename(anchor_path)
+                for extra in candidates[1:]:
+                    extra.unlink()
+                generated += 1
+
+    # --- per-scene anchors ---
+    scenes = spec.get("scenes", []) or []
+    for i, scene in enumerate(scenes, 1):
+        if not scene.get("anchor") or not scene["anchor"].get("prompt"):
+            continue
+        stem = _scene_stem(i, scene.get("label", "scene"))
+        anchor_path = project / "scenes" / f"{stem}-anchor.png"
+        if anchor_path.exists():
+            skipped += 1
+            continue
+        _generate_anchor(spec, project, i, scene, stem)
+        if anchor_path.exists():
+            generated += 1
+
+    _log(project, f"anchors: generated {generated}, skipped {skipped} existing")
+
+
 def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str | None:
     """Resolve `image: @none | @anchor | @last | path`. Returns absolute path
     string, or None if @none (force t2v), or @last at idx=1 with no anchor → t2v."""
@@ -460,9 +781,30 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     out_mp4 = project / "scenes" / f"{stem}.mp4"
     last_png = project / "scenes" / f"{stem}-last.png"
 
-    if out_mp4.exists() and last_png.exists():
-        _log(project, f"scene {idx} '{stem}' already exists, skipping")
-        return
+    if out_mp4.exists():
+        if not last_png.exists():
+            # mp4 was dropped in manually (or the -last.png was deleted).
+            # Extract the last frame via ffmpeg so downstream @last chains
+            # still work, then skip the render.
+            from imageio_ffmpeg import get_ffmpeg_exe
+            ffmpeg = get_ffmpeg_exe()
+            rc = subprocess.run([
+                ffmpeg, "-y", "-loglevel", "error",
+                "-sseof", "-0.1", "-i", str(out_mp4),
+                "-vframes", "1", str(last_png),
+            ]).returncode
+            if rc != 0:
+                _log(project, f"scene {idx} '{stem}' mp4 present but "
+                              f"last-frame extraction failed (rc={rc}); "
+                              f"deleting mp4 to force re-render")
+                out_mp4.unlink()
+            else:
+                _log(project, f"scene {idx} '{stem}' mp4 present, "
+                              f"extracted last frame, skipping render")
+                return
+        else:
+            _log(project, f"scene {idx} '{stem}' already exists, skipping")
+            return
 
     if not (project / "song.mp3").exists():
         sys.exit("song.mp3 missing — run `song` first")
@@ -496,7 +838,7 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
               "--prefix",  prefix,
               "--output-dir", str(project / "scenes"),
               "--timeout", "1800",       # 30 min — LTX 1024x576 10s quality can need 8-12 min
-              "--prompt",  scene["prompt"]]
+              "--prompt",  _expand_subjects(scene["prompt"], spec)]
     if vs["negative"]:
         common += ["--negative", vs["negative"]]
 
@@ -513,9 +855,49 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     if scene.get("fast") or (spec.get("video") or {}).get("fast"):
         common += ["--fast"]
 
-    if image_path is None:
+    # guides: optional yaml list of additional keyframe guides at specified
+    # positions within the shot. When present, route to `multiguide`
+    # (chained LTXVAddGuides) instead of plain ia2v — the first-frame
+    # anchor (image_path) is prepended at frame 0 automatically via
+    # ensure_frame_zero so scenes starting with a character-less
+    # establishing frame (e.g. a candle) can still carry a strong
+    # character anchor mid-shot.
+    guides_yaml = scene.get("guides")
+
+    if image_path is None and not guides_yaml:
         # First scene with no anchor → fall back to t2v (no audio slice).
         cmd = ["python3", str(COMFY), "t2v"] + common
+    elif guides_yaml:
+        import importlib.util
+        sb_lib = Path("/home/sandbox/.openclaw/skills/storyboard/lib/guides.py")
+        if not sb_lib.exists():
+            sb_lib = Path("/home/venetanji/.openclaw/skills/storyboard/lib/guides.py")
+        spec_gm = importlib.util.spec_from_file_location("storyboard_guides", sb_lib)
+        gm = importlib.util.module_from_spec(spec_gm); spec_gm.loader.exec_module(gm)
+
+        # Resolve at_sec / at_relative / at_frame for each guide entry.
+        resolved = gm.resolve_guides(
+            guides_yaml,
+            duration_sec=float(effective_duration),
+            fps=int(vs["fps"]),
+            project_dir=project,
+            token_resolver=lambda tok: _resolve_image(spec, project, idx, tok),
+        )
+        # Prepend frame-0 anchor if caller didn't put one there — the
+        # shot's `image:` (already resolved to image_path) fills that slot.
+        if image_path:
+            gm.ensure_frame_zero(resolved, image_path=image_path, strength=1.0)
+
+        guides_paths = ",".join(str(p) for _, p, _ in resolved)
+        frame_indices = ",".join(str(f) for f, _, _ in resolved)
+        strengths = ",".join(f"{s:.3f}" for _, _, s in resolved)
+        cmd = ["python3", str(COMFY), "multiguide",
+               "--guides", guides_paths,
+               "--frame_indices", frame_indices,
+               "--strengths", strengths,
+               "--audio", str(slice_mp3),
+               "--no_transition_lora", "1",
+               ] + common
     else:
         # For lipsync scenes, add previous scene's last frame as a second
         # IMAGE reference so LTX has identity + scene-to-scene continuity
@@ -577,12 +959,22 @@ def _transition_duration(spec, idx) -> float:
 
 
 def cmd_transitions(spec: dict, project: Path) -> None:
-    """Render transition clips between each adjacent scene pair. Each
-    transition is a morph from scene N's last frame → scene N+1's first
-    frame, driven by the ltx2.3-transition LoRA with an audio slice of
-    the song spanning the cut. Transitions run on COMFY_URL_FLUX (the
-    12GB GPU) so they can render in parallel with the main scene batch
-    on COMFY_URL_VIDEO. Restart-safe."""
+    """Render transition clips between each adjacent scene pair using real
+    video segments as guides (not still images). Each transition is
+    (guide_sec) real frames of scene A's tail → (empty_sec) empty-latent
+    invention → (guide_sec) real frames of scene B's head. The LoRA drives
+    the morph through the middle, and the real-video guides give it motion
+    to blend *into* rather than a static endpoint to converge on.
+
+    Song sync: transition occupies dur seconds of song time [a_end - dur/2,
+    a_end + dur/2]. The guide blocks are cut from prev_video / next_video
+    at the song-matched frame ranges so when the transition plays it looks
+    continuous with scene A's native motion and ends on scene B's native
+    motion. Controlled by `video.transitions.{duration, guide_sec}` in spec
+    (default dur=4s, guide_sec=1s → 1/2/1 split).
+
+    Transitions run on COMFY_URL_FLUX (the 12GB GPU) so they can render in
+    parallel with the main scene batch. Restart-safe."""
     vs = spec.get("video") or {}
     tv = vs.get("transitions") or {}
     if not tv.get("enabled"):
@@ -591,7 +983,9 @@ def cmd_transitions(spec: dict, project: Path) -> None:
     default_prompt = tv.get("prompt",
         "a smooth cinematic morph between scenes, matching lighting and mood, "
         "continuous motion across the cut")
-    default_fps = int(tv.get("fps", 25))
+    default_fps = int(tv.get("fps", 24))
+    guide_sec = float(tv.get("guide_sec", 1.0))
+    tail_buffer = float(vs.get("tail_buffer_sec", 0.0))
 
     scenes = spec.get("scenes", [])
     if len(scenes) < 2:
@@ -604,6 +998,10 @@ def cmd_transitions(spec: dict, project: Path) -> None:
         dur = _transition_duration(spec, i)
         if dur <= 0:
             continue
+        if dur < 2 * guide_sec + 0.25:
+            _log(project, f"transition {i}→{i+1} skipped — dur={dur}s too short "
+                          f"for guide_sec={guide_sec}s on each side")
+            continue
         a_idx = i          # outgoing scene (1-indexed)
         b_idx = i + 1      # incoming scene (1-indexed)
         a = scenes[a_idx - 1]
@@ -615,24 +1013,13 @@ def cmd_transitions(spec: dict, project: Path) -> None:
             _log(project, f"transition {a_idx}→{b_idx} already exists, skipping")
             continue
 
-        a_last = project / "scenes" / f"{a_stem}-last.png"
+        a_mp4 = project / "scenes" / f"{a_stem}.mp4"
         b_mp4 = project / "scenes" / f"{b_stem}.mp4"
-        if not a_last.exists() or not b_mp4.exists():
+        if not a_mp4.exists() or not b_mp4.exists():
             _log(project, f"transition {a_idx}→{b_idx} skipped — "
-                          f"prerequisites missing (last={a_last.exists()} "
+                          f"prerequisites missing (a_mp4={a_mp4.exists()} "
                           f"b_mp4={b_mp4.exists()})")
             continue
-
-        # Extract scene B's first frame
-        b_first = tdir / f"{b_stem}-first.png"
-        if not b_first.exists():
-            rc = subprocess.run(
-                [ffmpeg, "-y", "-v", "error", "-i", str(b_mp4),
-                 "-vf", "select=eq(n\\,0)", "-vframes", "1", "-q:v", "2",
-                 str(b_first)], capture_output=True).returncode
-            if rc != 0:
-                _log(project, f"transition {a_idx}→{b_idx}: first-frame extract failed")
-                continue
 
         # Audio slice covering the boundary ± dur/2
         a_end_song = float(a["start_sec"]) + float(a["duration_sec"])
@@ -646,13 +1033,42 @@ def cmd_transitions(spec: dict, project: Path) -> None:
                             str(audio_slice)],
                            capture_output=True)
 
-        # Per-boundary prompt override on scene B
-        prompt = (b.get("transition_from_prev") or {}).get("prompt", default_prompt)
+        # Per-boundary overrides on scene B's transition_from_prev block.
+        # Keys supported:
+        #   prompt: string override for the transition prompt
+        #   b_sparse: comma-sep latent positions or list of ints.
+        #            Default "96" (= 1f, single B-anchor at the tail).
+        #            Use "72,80,88,96" (= 4f) on boundaries INTO lipsync/
+        #            singing scenes for smoother character establishment.
+        bttp = (b.get("transition_from_prev") or {})
+        prompt = bttp.get("prompt", default_prompt)
+        b_sparse = bttp.get("b_sparse") or tv.get("default_b_sparse", "96")
+        if isinstance(b_sparse, list):
+            b_sparse_str = ",".join(str(int(x)) for x in b_sparse)
+        else:
+            b_sparse_str = str(b_sparse)
+
+        # Guide-block frame counts must be multiples of 8 per LTX's latent
+        # temporal quantization. 1s @ 24fps = 24 frames → ok.
+        guide_frames = max(8, (int(guide_sec * default_fps) // 8) * 8)
+        empty_start_sec = guide_sec
+        empty_end_sec = dur - guide_sec
 
         prefix = f"trans_{a_idx}_{b_idx}"
+        # Video-guide transition via LTXVAddGuide:
+        #   A side:  24-frame batch at latent [0, 23], strength 1.0
+        #            (prev_video's tail seen from slice_song_start)
+        #   B side:  SPARSE — single frame at latent 96 (scene-B head),
+        #            strength 1.0. Multi-frame contiguous B-blocks caused
+        #            a mid-transition freeze at the snap-in (scene
+        #            content hard-locking over 24 frames); a single anchor
+        #            at the end lets the LoRA morph through the empty
+        #            region and land cleanly on scene B's first in-stitch
+        #            frame without a snap.
+        #   Mask:    1.0-4.0s (audio drives invented motion from [24, 96])
         cmd = ["python3", str(COMFY), "transition",
-               "--first", str(a_last),
-               "--last", str(b_first),
+               "--prev_video", str(a_mp4),
+               "--next_video", str(b_mp4),
                "--audio", str(audio_slice),
                "--prompt", prompt,
                "--seconds", f"{dur:.2f}",
@@ -661,8 +1077,23 @@ def cmd_transitions(spec: dict, project: Path) -> None:
                "--height", str(vs["resolution"][1] if isinstance(vs.get("resolution"), list) else 832),
                "--prefix", prefix,
                "--output-dir", str(tdir),
-               "--timeout", "1200"]
-        _log(project, f"transition {a_idx}→{b_idx}: {dur}s, audio from {slice_start:.2f}s")
+               "--multiframe_guide", str(guide_frames),
+               "--multiframe_guide_last", "1",
+               "--first_guide_strength", "1.0",
+               "--last_guide_strength", "1.0",
+               "--use_addguide", "1",
+               "--no_inplace", "1",
+               "--b_sparse_latent_positions", b_sparse_str,
+               "--slice_song_start_sec", f"{slice_start:.3f}",
+               "--prev_video_song_start_sec", f"{float(a['start_sec']):.3f}",
+               "--next_video_song_start_sec", f"{float(b['start_sec']):.3f}",
+               "--prev_video_buffer", f"{tail_buffer:.3f}",
+               "--mask_start_sec", "1.0",
+               "--mask_end_sec", "4.0",
+               "--timeout", "1800"]
+        _log(project, f"transition {a_idx}→{b_idx}: {dur}s "
+                      f"({guide_sec}s A-guide + {empty_end_sec - empty_start_sec}s empty + "
+                      f"{guide_sec}s B-guide), audio from {slice_start:.2f}s")
         rc = _run(cmd, log_path=project / "run.log",
                   env_override=_comfy_env_for("flux"))  # flux comfy = parallel with main
         if rc != 0:
@@ -735,46 +1166,80 @@ def cmd_assemble(spec: dict, project: Path) -> None:
         sidx = candidate.stem.replace("song_v", "")
         song_variants.append((f"final_v{sidx}", candidate))
 
-    videos_csv = ",".join(str(p) for p in clip_paths)
-    trims_csv  = ",".join(f"{d:.3f}" for d in durations)
-    starts_csv = ",".join(f"{s:.3f}" for s in starts)
+    # Delegate to the shared storyboard assemble helper (same pipeline
+    # drama-video uses). Pre-trim → strip audio → concat → mux song.
+    ffmpeg = FFMPEG()
+    import importlib.util
+    sb_lib = Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py")
+    if not sb_lib.exists():
+        sb_lib = Path("/home/venetanji/.openclaw/skills/storyboard/lib/assemble.py")
+    m_spec = importlib.util.spec_from_file_location("storyboard_assemble", sb_lib)
+    asm = importlib.util.module_from_spec(m_spec); m_spec.loader.exec_module(asm)
+
+    clip_tuples = [(src, float(start), float(dur))
+                   for src, start, dur in zip(clip_paths, starts, durations)]
 
     for prefix, song_path in song_variants:
-        cmd = ["python3", str(COMFY), "vconcat",
-               "--videos", videos_csv,
-               "--audio", str(song_path),
-               "--fps", str(fps),
-               "--trim-durations", trims_csv,
-               "--trim-starts", starts_csv,
-               "--prefix", prefix,
-               "--output-dir", str(project),
-               "--timeout", "1800"]
+        final = project / f"{prefix}.mp4"
         _log(project, f"assembling {prefix}.mp4 ({len(clip_paths)} clips"
                       f"{', with transitions' if trans_enabled else ''}, "
                       f"audio={song_path.name})")
-        rc = _run(cmd, log_path=project / "run.log",
-                  env_override=_comfy_env_for("video"))
-        if rc != 0:
-            sys.exit(f"assembly failed for {prefix}")
-        produced = sorted(project.glob(f"{prefix}_*.mp4"),
-                          key=lambda p: p.stat().st_mtime, reverse=True)
-        final = project / f"{prefix}.mp4"
-        if produced and produced[0] != final:
-            produced[0].rename(final)
+        asm.assemble_clips(
+            clips=clip_tuples, audio_file=song_path, output=final,
+            work_dir=project / "scenes" / "_assemble_cache", ffmpeg=ffmpeg)
         _log(project, f"assembled → {final} "
                       f"({final.stat().st_size//1024 if final.exists() else '?'} KB)")
 
 
-def cmd_all(spec: dict, project: Path) -> None:
+def cmd_all(spec: dict, project: Path, no_gate: bool = False) -> None:
+    """End-to-end pipeline with two confirm-before-render gates:
+
+      1. After `song` — STOP if spec.gate_confirm_song (default true) so a
+         human can listen to the N*2 variants, pick the best, and rename it
+         to song.mp3. Bypass with --no-gate or gate_confirm_song: false.
+      2. After `anchors` — STOP if spec.gate_confirm_anchors (default true)
+         so a human can inspect the generated anchor images before committing
+         GPU time to the per-scene LTX renders. Bypass likewise.
+
+    Without the gates the pipeline runs fully unattended."""
     _ensure_dirs(project)
     cmd_song(spec, project)
+
+    # --- GATE 1: song confirmation ---
+    gate_song = bool(spec.get("gate_confirm_song", True)) and not no_gate
+    if gate_song:
+        variants = []
+        if (project / "song.mp3").exists():
+            variants.append(project / "song.mp3")
+        variants += sorted(project.glob("song_v*.mp3"))
+        print()
+        print("=" * 72)
+        print(" QUALITY GATE 1/2 — song variants generated, human review required")
+        print("=" * 72)
+        for p in variants:
+            try:
+                d = _probe_duration(p)
+            except Exception:
+                d = 0.0
+            print(f"  {p.name:20}  {d:6.1f}s  {p.stat().st_size//1024} KB")
+        print()
+        print(" Next steps:")
+        print("   1. Listen to each variant.")
+        print("   2. Pick the best. Rename it to `song.mp3` (back up the current one).")
+        print("   3. Add scenes to song.yaml.")
+        print("   4. Re-run `music_video.py all <spec>` (or `all --no-gate` to skip gates).")
+        print()
+        print(" Bypass: set `gate_confirm_song: false` in song.yaml, or pass --no-gate.")
+        print("=" * 72)
+        return
 
     # Hard check: scene total must cover the longest song variant, otherwise
     # the assembly will freeze-frame the tail for potentially minutes. Fail
     # loudly BEFORE burning GPU time on the scenes.
-    # Final timeline is sum(duration_sec) — each scene's tail buffer is
-    # trimmed off during concat via GetImageRangeFromBatch, no crossfade.
-    assembled = sum(s["duration_sec"] for s in spec["scenes"])
+    scenes = spec.get("scenes") or []
+    if not scenes:
+        sys.exit("spec has no scenes — add scenes to song.yaml, then re-run `all`.")
+    assembled = sum(s["duration_sec"] for s in scenes)
     longest_song = 0.0
     for p in [project / "song.mp3", *sorted(project.glob("song_v*.mp3"))]:
         if p.exists():
@@ -788,7 +1253,34 @@ def cmd_all(spec: dict, project: Path) -> None:
                       f"extend existing durations up to 20s each, then rerun.")
         sys.exit("aborting before scene generation — scene total too short for song.")
 
-    for i in range(1, len(spec["scenes"]) + 1):
+    # --- anchors pass (top-level + per-scene flux2) ---
+    cmd_anchors(spec, project)
+
+    # --- GATE 2: anchors confirmation ---
+    gate_anchors = bool(spec.get("gate_confirm_anchors", True)) and not no_gate
+    if gate_anchors:
+        print()
+        print("=" * 72)
+        print(" QUALITY GATE 2/2 — anchor images generated, human review required")
+        print("=" * 72)
+        anchor_imgs: list[Path] = []
+        top = spec.get("anchor_image")
+        if top and (project / top).exists():
+            anchor_imgs.append((project / top).resolve())
+        anchor_imgs += sorted((project / "scenes").glob("*-anchor.png"))
+        for p in anchor_imgs:
+            print(f"  {p.relative_to(project)}")
+        print()
+        print(" Next steps:")
+        print("   1. Open these PNGs (filebrowser / image viewer).")
+        print("   2. If an anchor looks wrong, DELETE it and re-run `anchors <spec>`")
+        print("      (tweak the scene's anchor.prompt or top-level anchor_prompt).")
+        print("   3. When anchors look right, re-run `all --no-gate <spec>` or set")
+        print("      `gate_confirm_anchors: false` in song.yaml and re-run.")
+        print("=" * 72)
+        return
+
+    for i in range(1, len(scenes) + 1):
         cmd_scene(spec, project, i)
     # Render transitions (no-op if video.transitions.enabled != true).
     # Runs on COMFY_URL_FLUX so they parallelize with... well, here they run
@@ -796,6 +1288,32 @@ def cmd_all(spec: dict, project: Path) -> None:
     # during the main batch on a second terminal.
     cmd_transitions(spec, project)
     cmd_assemble(spec, project)
+
+
+def cmd_scenes(spec: dict, project: Path) -> None:
+    """Render every scene in sequence. Restart-safe (skips scenes already done).
+    Refuses to submit if ANY scene exceeds MAX_SCENE_DURATION — a too-long
+    clip can OOM-kill the comfy server and wipe the whole queue, forcing
+    everyone to re-submit."""
+    scenes = spec.get("scenes") or []
+    if not scenes:
+        sys.exit("spec has no scenes")
+    if not (project / "song.mp3").exists():
+        sys.exit("song.mp3 missing — run `song` first (and confirm the chosen variant)")
+    too_long = [
+        (i, s) for i, s in enumerate(scenes, 1)
+        if float(s.get("duration_sec", 0)) > MAX_SCENE_DURATION
+    ]
+    if too_long:
+        lines = [
+            f"  scene {i} '{s.get('label','?')}': {s['duration_sec']}s"
+            for i, s in too_long
+        ]
+        sys.exit("refusing to render — some scenes exceed MAX_SCENE_DURATION "
+                 f"({MAX_SCENE_DURATION}s). Split these into shorter shots:\n"
+                 + "\n".join(lines))
+    for i in range(1, len(scenes) + 1):
+        cmd_scene(spec, project, i)
 
 
 def cmd_status(spec: dict, project: Path) -> None:
@@ -817,23 +1335,46 @@ def cmd_status(spec: dict, project: Path) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(prog="music_video")
     sub = p.add_subparsers(dest="cmd", required=True)
-    for c in ["plan", "song", "assemble", "transitions", "all", "status"]:
+
+    # `init` takes a slug, not a spec path.
+    si = sub.add_parser("init", help="create a new project skeleton")
+    si.add_argument("slug")
+    si.add_argument("--theme", default=None,
+                    help="optional theme/brief — injected as a comment hint")
+    si.add_argument("--force", action="store_true",
+                    help="overwrite an existing project dir")
+
+    for c in ["plan", "song", "anchors", "scenes", "assemble", "transitions",
+              "status"]:
         sp = sub.add_parser(c)
         sp.add_argument("spec")
+
+    sa = sub.add_parser("all")
+    sa.add_argument("spec")
+    sa.add_argument("--no-gate", action="store_true",
+                    help="bypass both confirm-before-render gates")
+
     ss = sub.add_parser("scene")
     ss.add_argument("idx", type=int)
     ss.add_argument("spec")
 
     args = p.parse_args()
+
+    if args.cmd == "init":
+        cmd_init(args.slug, args.theme, args.force)
+        return
+
     spec, project = _load_spec(args.spec)
     _ensure_dirs(project)
 
     if args.cmd == "plan":      cmd_plan(spec, project)
     elif args.cmd == "song":    cmd_song(spec, project)
+    elif args.cmd == "anchors": cmd_anchors(spec, project)
     elif args.cmd == "scene":   cmd_scene(spec, project, args.idx)
+    elif args.cmd == "scenes":  cmd_scenes(spec, project)
     elif args.cmd == "assemble":cmd_assemble(spec, project)
     elif args.cmd == "transitions": cmd_transitions(spec, project)
-    elif args.cmd == "all":     cmd_all(spec, project)
+    elif args.cmd == "all":     cmd_all(spec, project, no_gate=args.no_gate)
     elif args.cmd == "status":  cmd_status(spec, project)
 
 

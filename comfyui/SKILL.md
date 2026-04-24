@@ -2,7 +2,7 @@
 name: comfyui
 description: >
   Generate images and videos using ComfyUI workflows via direct REST API at
-  http://localhost:8188. Also manages character reference image downloads
+  https://comfyui.tail9683c.ts.net. Also manages character reference image downloads
   from HuggingFace. Use when asked to create images, edit photos, generate videos,
   or run Flux/LTX2/Wan workflows. Triggers on: generate an image, create a video,
   Flux2, ComfyUI, text-to-image, image-to-image, image-to-video, character image,
@@ -13,14 +13,14 @@ description: >
 
 Direct ComfyUI REST API access for image and video generation.
 
-**ComfyUI:** http://localhost:8188 | **RTX 3090 24GB** | v0.16.1
+**ComfyUI:** https://comfyui.tail9683c.ts.net | **RTX 3090 24GB** | v0.16.1
 
 ## Script paths (use absolute; tilde expansion is unreliable under `exec`)
 
 | Where you're running | Path to use |
 |---|---|
 | Inside the sandbox (most agents) | `/home/sandbox/.openclaw/skills/comfyui/scripts/…` |
-| On the host (main, zeus) | `~/.openclaw/skills/comfyui/scripts/…` |
+| On the host (main, zeus) | `/home/venetanji/.openclaw/skills/comfyui/scripts/…` |
 
 `~/.openclaw/skills/…` works in an interactive shell but NOT always in the `exec` tool — use the absolute form so the first call succeeds.
 
@@ -87,7 +87,7 @@ HF_TOKEN=<YOUR_HF_TOKEN> \
 python3 /home/sandbox/.openclaw/skills/comfyui/scripts/download_characters.py 6166r 1822g
 ```
 
-**Storage:** `~/.openclaw/assets/characters/<code>/` (e.g. `~/.openclaw/assets/characters/6166r/`)
+**Storage:** `~/.openclaw/skills/storyworld/references/<code>/` (e.g. `~/.openclaw/skills/storyworld/references/6166r/`)
 - Multiple reference images per character (e.g. `1.png`, `2.jpg`, `img3.jpeg`)
 - `.txt` files alongside each image contain tag-based captions
 
@@ -97,7 +97,7 @@ python3 /home/sandbox/.openclaw/skills/comfyui/scripts/download_characters.py 61
 python3 -c "
 import sys; sys.path.insert(0,'~/.openclaw/skills/comfyui/scripts')
 from core import upload_if_local
-name = upload_if_local('~/.openclaw/assets/characters/6166r/1.png')
+name = upload_if_local('~/.openclaw/skills/storyworld/references/6166r/1.png')
 print(name)
 "
 
@@ -109,8 +109,8 @@ python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py i2i \
 ```
 
 ### Workflow for "Generate image of character 6166r"
-1. Read YAML: `repos/polyu-storyworld/characters/6166r.yaml` → character description
-2. Read captions: `~/.openclaw/assets/characters/6166r/*.txt`
+1. Read YAML: `~/.openclaw/skills/storyworld/characters/6166r.yaml` → character description
+2. Read captions: `~/.openclaw/skills/storyworld/references/6166r/*.txt`
 3. Pick best reference image (e.g. `1.png` — usually the primary front view)
 4. Upload to ComfyUI via `upload_if_local()`
 5. Build i2i prompt: combine YAML description + reference caption
@@ -146,16 +146,55 @@ python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_run.py workflow.jso
 ### comfy_graph.py — CLI entry point (most common)
 Builds workflows and submits them. All commands support `--output-dir`, `--timeout`, `--seed`.
 ```
-t2i      Text-to-image (Flux2)
-i2i      Single image edit (Flux2 + reference image)
-i2i2     Double image edit (two references blended)
-angles   Multi-angle batch from one reference
-t2v      Text-to-video (LTX-2.3)
-i2v      Image-to-video (LTX-2.3, first-frame)
-tts      Text-to-speech (Qwen3)
-dump     Print workflow JSON only, no execution
-last_frame  Extract last frame from server video file
+t2i          Text-to-image (Flux2)
+i2i          Single-reference image edit (Flux2, 1 ref + prompt)
+i2i2         Two-reference image edit (Flux2)
+i2iN         N-reference image edit (Flux2) — pass --images a.png,b.png,c.png
+multiprompt  Many prompts × one reference  — one submission, N outputs
+i2i2multi    Many prompts × two references — one submission, N outputs
+i2iNmulti    Many prompts × N references   — one submission, N outputs
+t2v          Text-to-video (LTX-2.3)
+i2v          Image-to-video (LTX-2.3, first-frame)
+ia2v         Image + audio → video (LTX-2.3)
+flf2v        First + last frame → video (LTX-2.3, converges to the last frame)
+transition   Song-aligned cross-scene morph (prev_video + next_video guides + masked middle)
+multiguide   Chained LTXVAddGuide — N anchors at N latent positions within one clip
+tts          Text-to-speech (Qwen3)
+dump         Print workflow JSON only, no execution
+last_frame   Extract last frame from a server-side video file
 ```
+
+### ⚡ When the user asks for "variants" / "multiple versions" / "N angles" / "variations"
+
+**USE `multiprompt` or `i2iNmulti` — NEVER a shell for-loop.** Each of these batches
+all prompts into ONE comfy submission (one model load, one queue slot, same reference
+reused) and outputs N PNGs with the conventional `_00001_`..`_NNNNN_` suffixes. This
+is dramatically faster and the sandbox preflight blocks for-loops / `&& chained &&
+commands` anyway.
+
+```bash
+# 10 variants of the SAME subject from one reference image — ONE submission:
+python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py multiprompt \
+    --image /workspace/outputs/char.png \
+    --prompts "$(printf 'variant 1 description\nvariant 2 description\n…\nvariant 10 description')" \
+    --append ". Consistent style: <global style brief>. Preserve same character." \
+    --width 896 --height 1664 \
+    --prefix char_variants \
+    --output-dir /workspace/outputs/variants/
+# → char_variants_00001_.png, char_variants_00002_.png, … char_variants_00010_.png
+
+# 8 composite scenes of the SAME two characters — ONE submission:
+python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py i2i2multi \
+    --image1 /workspace/outputs/snakebird.png \
+    --image2 /workspace/outputs/owl.png \
+    --prompts "$(printf 'scene A\nscene B\nscene C\n…')" \
+    --append ". Preserve exact appearance of both characters. <style brief>"
+```
+
+**Prompting each line (edit-style)**: every prompt line should be an edit instruction —
+"Take the character from image 1 … place them in … preserve same features …" — not a
+standalone scene description. Flux-2 Klein is an image-editing model when given refs;
+verbose edit instructions outperform terse scene descriptions.
 
 ### comfy_query.py — Server diagnostics
 ```
@@ -219,13 +258,18 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 | Command | Description | Key options |
 |---------|-------------|-------------|
 | `t2i` | Text-to-image (Flux2) | `--prompt`, `--width`, `--height`, `--steps`, `--prefix`, `--lora` |
-| `i2i` | Single image edit (Flux2 + reference) | `--image`, `--prompt`, `--width`, `--steps` |
-| `i2i2` | Double image edit (two references) | `--image1`, `--image2`, `--prompt` |
-| `angles` | Multi-angle batch from one reference | `--image`, `--prompts`, `--prepend`, `--append` |
+| `i2i` | Single-reference edit (1 ref + prompt) | `--image`, `--prompt`, `--width`, `--steps` |
+| `i2i2` | Two-reference edit | `--image1`, `--image2`, `--prompt` |
+| `i2iN` | N-reference edit | `--images a.png,b.png,c.png`, `--prompt` |
+| `multiprompt` | **Batch N prompts × 1 ref** → N outputs / 1 submission | `--image`, `--prompts` (newline sep), `--prepend`, `--append` |
+| `i2i2multi` | **Batch N prompts × 2 refs** → N outputs / 1 submission | `--image1`, `--image2`, `--prompts`, `--prepend`, `--append` |
+| `i2iNmulti` | **Batch N prompts × N refs** → N outputs / 1 submission | `--images a,b,c`, `--prompts`, `--prepend`, `--append` |
 | `t2v` | Text-to-video (LTX-2.3, two-pass) | `--prompt`, `--seconds`, `--fps`, `--width`, `--height` |
 | `i2v` | Image-to-video (LTX-2.3, first-frame + refine) | `--image`, `--prompt`, `--seconds`, `--fps` |
 | `ia2v` | Image + audio to audio-reactive video | `--image`, `--audio`, `--prompt`, `--seconds`, `--fps` |
 | `flf2v` | First+last frame to video (LTX-2.3, single-pass) | `--first`, `--last`, `--prompt`, `--seconds`, `--fps`, `--guide-strength` |
+| `transition` | Song-aligned morph between two clips (LTX-2.3) | `--prev_video`, `--next_video`, `--audio`, `--seconds`, `--mask_start_sec`, `--mask_end_sec`, `--use_addguide 1`, `--multiframe_guide 24`, `--multiframe_guide_last 1`, `--b_sparse_latent_positions "96"` or `"72,80,88,96"` |
+| `multiguide` | N image guides at N latent positions (LTX-2.3) | `--guides a.png,b.png,...`, `--frame_indices 0,96,168`, `--strengths 1.0,1.0,1.0`, `--audio`, `--no_transition_lora 1` (when not a transition) |
 | `tts` | Text-to-speech (Qwen3 TTS) | `--text`, `--prefix` |
 | `run` | Submit any workflow JSON (file or stdin) | `--file workflow.json` or `cat wf.json \| ... run` |
 | `dump` | Print workflow JSON, no execution | workflow command + options |
@@ -239,8 +283,29 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 - `--fast` *(video only: t2v/i2v/ia2v/flf2v)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
 
 ### Environment variables
-- `COMFY_URL` — ComfyUI server URL (default: `http://localhost:8188`)
+- `COMFY_URL` — ComfyUI server URL (default: `https://comfyui.tail9683c.ts.net`)
+- `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — pre-set in the sandbox env so you don't need to prefix commands with `COMFY_URL=…`. Just run `comfy_graph.py t2i …` — sandbox already knows.
 - `OPENCLAW_NOTIFY_TARGET` — default notification target
+
+### Discord attachments — `MEDIA:` directive in your reply
+
+Every successful comfy_graph call automatically copies the outputs to
+`/workspace/media/outbound/<filename>` (sandboxed agents) or
+`/home/venetanji/.openclaw/workspace/media/outbound/<filename>` (host). Those are
+the same file via the workspace bind mount.
+
+To attach in a Discord reply, add a line **starting with `MEDIA:`** (only leading
+whitespace allowed before it) pointing at the **host-side** path — the reply parser
+runs host-side and resolves literal paths only:
+
+```
+Here's your image!
+MEDIA:/home/venetanji/.openclaw/workspace/media/outbound/flux2_t2i_00012_.png
+```
+
+Inline forms (`"... image: MEDIA:/path ..."`) are NOT parsed. One `MEDIA:` line per
+file. Do NOT `cp` or `mv` files into random workspace subdirs — core.py already
+places them in the right spot.
 
 ## Architecture
 
@@ -266,6 +331,28 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 - **Length:** `(seconds × fps)` rounded to `≡ 1 (mod 8)`
 - **Audio for ia2v:** `LoadAudio` → `TrimAudioDuration` → `LTXVAudioVAEEncode` → `SetLatentNoiseMask` (with zero-valued `SolidMask`)
 - **flf2v (first-last frame):** adapted from the `Comfy-Org/workflow_templates` flf2v template into the same two-pass shape as the other flows. Pass-1 uses chained `LTXVAddGuide` (frame_idx=0 + frame_idx=-1 at strength 0.7) on the base latent; pass-2 re-injects both guides at strength 1.0 on the upsampled latent. Post-decode `LTXVCropGuides` strips the injected guide frames so the output doesn't show the raw input images as first/last frames (use `--fast` to keep the single-pass shape the template originally had).
+- **multiguide (N-anchor):** chained `LTXVAddGuide` calls, one per guide, each
+  at its specified latent `frame_idx` (snapped to 8 upstream). Used by
+  music-video's `guides:` scene field to anchor identity mid-shot when the
+  first frame doesn't show the character, and for scenes ≥13s where
+  single-anchor ia2v drifts by the tail. Pass `--no_transition_lora 1` when
+  the output is a scene (not a transition) — the transition LoRA pulls hard
+  toward endpoint convergence, which is wrong for a normal ia2v-style shot.
+- **transition (song-aligned morph between two clips):** pass-1 injects real
+  video frames from `prev_video` (A-guide, latent positions 0..N-1,
+  strength 1.0) and `next_video` (B-guide, single frame at position 96 by
+  default — see `b_sparse_latent_positions`). The masked middle is driven by
+  the audio slice via `LTXVAudioVideoMask`. `use_addguide=1` is the mode
+  used by music-video — `LTXVAddGuide` natively handles multi-frame IMAGE
+  batches; the older `LTXVImgToVideoInplaceKJ` with `num_images=2` only
+  picks the first frame of each batch and produces a frozen middle. Final
+  decode MUST pass `strip_guides_cond` to remove the injected guide tokens
+  from the latent tail, or the clip will run `guide_frames` longer than
+  requested. Keep B-side guides sparse (every 8 latent frames); contiguous
+  multi-frame B-blocks cause a snap-in freeze where the scene content
+  hard-locks. `"96"` (1f) is the default and works for most boundaries;
+  `"72,80,88,96"` (4f) gives stronger character establishment going into
+  singing / lipsync scenes.
 
 ### Available LoRAs (19)
 - Camera: `ltx-2-19b-lora-camera-control-dolly-in/out/left/right/jib-up/jib-down/static`
@@ -282,7 +369,7 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 Your job after the exec returns:
 
 1. Parse the `saved: …` line from the output.
-2. Translate sandbox → host path: `/workspace/…` → `~/.openclaw/workspace-<agent>/…` (the `message` tool resolves paths on the host).
+2. Translate sandbox → host path: `/workspace/…` → `/home/venetanji/.openclaw/workspace-<agent>/…` (the `message` tool resolves paths on the host).
 3. Send with the `message` tool's `media` arg.
 
 ```bash
@@ -298,7 +385,7 @@ message({
   action: "send",
   channel: "discord",
   to: "<channel_id>",
-  media: "~/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
+  media: "/home/venetanji/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
   message: "Here's your image."
 })
 ```
@@ -313,7 +400,7 @@ Blocking exec is fine for **images (< 30s)** and **short TTS**. For **video** (L
 
 ```
 sessions_spawn({
-  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is ~/.openclaw/workspace-<agent>/outputs/<file>.",
+  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is /home/venetanji/.openclaw/workspace-<agent>/outputs/<file>.",
   runtime: "subagent",
   sandbox: "inherit",
   mode: "run"

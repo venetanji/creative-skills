@@ -12,7 +12,7 @@ import subprocess
 import shlex
 from pathlib import Path
 
-BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
+BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
 
 # Default notification target: Discord DM channel for gio's DMs
 NOTIFY_TARGET = os.environ.get(
@@ -64,21 +64,30 @@ class WorkflowGraph:
         return json.dumps(self.to_dict(), indent=indent)
 
 
-def upload_image(local_path: str) -> str:
+def upload_image(local_path: str, subfolder: str = "",
+                  upload_as: str | None = None) -> str:
+    """Upload a local file into ComfyUI's input/ dir, optionally under a
+    subfolder and/or with a different remote name. Returns the server-side
+    name (relative to input/).
+
+    subfolder: if set, file lands at `/app/ComfyUI/input/<subfolder>/<name>`.
+    upload_as: override the remote filename. Useful for enforcing
+    alphabetical ordering (e.g. prefix with `001_` for concat staging)."""
     path = Path(local_path)
     data = path.read_bytes()
     ext = path.suffix.lower()
     mime = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png" if ext == ".png" else "application/octet-stream"
+    remote_name = upload_as or path.name
     boundary = "----ComfyUploadBoundary"
     body = (
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="image"; filename="{path.name}"\r\n'
+        f'Content-Disposition: form-data; name="image"; filename="{remote_name}"\r\n'
         f"Content-Type: {mime}\r\n\r\n"
     ).encode() + data + (
         f"\r\n--{boundary}\r\n"
         f'Content-Disposition: form-data; name="type"\r\n\r\ninput\r\n'
         f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="subfolder"\r\n\r\n\r\n'
+        f'Content-Disposition: form-data; name="subfolder"\r\n\r\n{subfolder}\r\n'
         f"--{boundary}--\r\n"
     ).encode()
     req = urllib.request.Request(
@@ -123,7 +132,13 @@ def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notif
                 with urllib.request.urlopen(req, timeout=15) as r:
                     return json.load(r)
             except urllib.error.HTTPError as e:
-                if 500 <= e.code < 600 and transient < max_transient:
+                # 5xx: server error, retry generously. 400 on /prompt: usually
+                # an upload-race (file not yet visible server-side when the
+                # workflow references it) — retry a small number of times
+                # with short backoff; real malformed workflows still fail.
+                retry_400 = (e.code == 400 and url.endswith("/prompt")
+                             and transient < 3)
+                if (500 <= e.code < 600 and transient < max_transient) or retry_400:
                     transient += 1
                     wait = min(20, 2 * transient)
                     print(f"[transient HTTP {e.code}] {url}; retry {transient}/{max_transient} in {wait}s",
@@ -199,18 +214,26 @@ def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, capti
                         print(f"saved: {dest}")
                         saved_files.append(dest)
 
-    # Copy to OpenClaw outbound for autosend.
-    # Inside sandbox (home=/home/sandbox), /workspace/media/outbound is shared with host's
-    # ~/.openclaw/sandboxes/media/outbound. Outside sandbox, use ~/.openclaw/media/outbound.
+    # Copy outputs to the media/outbound dir inside the agent's workspace
+    # so they are reachable via a `MEDIA:<host-path>` directive. Path:
+    #   - Sandboxed agents: /workspace/media/outbound/  (the workspace
+    #     bind mount surfaces this on the host at the agent's workspace dir,
+    #     e.g. /home/venetanji/.openclaw/workspace/media/outbound/)
+    #   - Host (main, zeus): /home/venetanji/.openclaw/workspace/media/outbound/
+    #   - Override anything via the OPENCLAW_MEDIA_DIR env var (expects the
+    #     `outbound/` subdir to exist or be creatable under it).
     try:
-        home = Path.home()
-        if str(home) == "/home/sandbox":
-            outbound_dir = Path("/workspace") / "media" / "outbound"
+        env_override = os.environ.get("OPENCLAW_MEDIA_DIR")
+        if env_override:
+            outbound_dir = Path(env_override) / "outbound"
+        elif Path("/workspace").is_dir() and os.access("/workspace", os.W_OK):
+            outbound_dir = Path("/workspace/media/outbound")
         else:
-            outbound_dir = home / ".openclaw" / "media" / "outbound"
+            outbound_dir = Path("/home/venetanji/.openclaw/workspace/media/outbound")
         outbound_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
-        outbound_dir = Path.home() / ".openclaw" / "media" / "outbound"
+        outbound_dir = Path("/home/venetanji/.openclaw/workspace/media/outbound")
+        outbound_dir.mkdir(parents=True, exist_ok=True)
 
     for p in saved_files:
         try:

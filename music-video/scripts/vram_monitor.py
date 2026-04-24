@@ -39,7 +39,7 @@ def sample(base: str) -> dict | None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("log")
-    p.add_argument("--base", default="http://localhost:8188")
+    p.add_argument("--base", default="https://comfyui.tail9683c.ts.net")
     p.add_argument("--interval", type=float, default=10.0)
     p.add_argument("--until-file", default=None)
     p.add_argument("--max-minutes", type=float, default=None)

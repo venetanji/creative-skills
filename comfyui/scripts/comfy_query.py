@@ -10,7 +10,7 @@ Usage:
  python comfy_query.py history [<prompt_id>] [--limit N]
  python comfy_query.py stats
 
-Env: COMFY_URL (default: http://localhost:8188)
+Env: COMFY_URL (default: https://comfyui.tail9683c.ts.net)
 """
 
 import json
@@ -19,7 +19,7 @@ import sys
 import urllib.request
 from urllib.parse import quote
 
-BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
+BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
 
 
 def get(path):

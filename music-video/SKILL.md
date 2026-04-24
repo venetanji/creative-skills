@@ -23,31 +23,109 @@ Author a YAML spec → run one command → get a full music video.
 
 ## The loop
 
-1. Author `song.yaml` — title, style brief, lyrics, scene list (each: label, start_sec, duration_sec, prompt, image).
-2. `music_video.py all song.yaml` runs the whole pipeline:
-   - suno-mcp generates the song (`song.mp3` + `song_meta.json`)
-   - ffmpeg slices the song per-scene (`song_slices/`)
-   - For each scene: comfyui `ia2v` with that slice as audio + an image (anchor or previous scene's last frame)
-   - Last frame of each scene is extracted → becomes next scene's anchor (visual continuity)
-   - All scenes concat + clean song audio overlaid → `final.mp4`
+Nine-step workflow with two **quality-check gates** where the pipeline stops
+and waits for a human (or reviewing agent) to confirm before the next
+expensive phase. A bad song variant or a broken base anchor will ruin every
+downstream scene — don't skip the gates unless you're sure.
 
-Restart-safe: rerunning `all` skips anything already on disk. Iterate individual scenes with `scene N song.yaml`.
+1. **`init <slug>`** — creates `~/.openclaw/workspace/<slug>/` with a
+   skeleton `song.yaml`. Use `--theme "<text>"` to inject context for the
+   lyrics/style fields. Example:
+   `music_video.py init new-beginnings --theme "fresh start"`
+2. **Fill `song.yaml`** — `title`, `style` (producer-style brief — see
+   `~/.openclaw/skills/suno-mcp/references/style-guide.md`), and `lyrics`
+   (`[Verse]/[Chorus]/[Bridge]` tags, one line per phrase, no mid-line
+   punctuation — see
+   `~/.openclaw/skills/suno-mcp/references/lyrics-guide.md`). Leave `scenes`
+   empty for now.
+3. **`song <spec>`** — generates `spec.suno.runs * 2` suno variants
+   (`song.mp3`, `song_v2.mp3`, `song_v3.mp3`, ...). Restart-safe: re-runs
+   only top up missing variants.
+4. **QUALITY GATE 1 — pick the best variant.** Listen to every `song*.mp3`,
+   pick the one you want, back up or delete `song.mp3`, then rename your
+   chosen variant to `song.mp3`. Keep the others as `song_vN.mp3` — they
+   become parallel `final_vN.mp4` renders during assembly.
+5. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
+   `duration_sec`, `prompt`, `image` (`@anchor | @last | path`). Optionally
+   give a scene an `anchor:` block to pre-render a flux2 key frame for it.
+6. **`anchors <spec>`** — flux2 renders the top-level `anchor_image` (from
+   `anchor_prompt`, or fallback `title + style`) plus any per-scene anchors.
+   Idempotent — skips files already on disk.
+7. **QUALITY GATE 2 — review the anchors.** Open every PNG under
+   `<project>/` and `<project>/scenes/`. If anything is wrong (wrong face,
+   wrong mood, bad composition), DELETE that PNG and re-run `anchors <spec>`
+   — tweak the scene's `anchor.prompt` or top-level `anchor_prompt` first.
+   A bad base anchor propagates into every LTX scene that chains off it.
+8. **`scenes <spec>`** — renders every scene (LTX ia2v with the song slice +
+   resolved image). Restart-safe. Iterate one at a time with
+   `scene N <spec>`.
+9. **`assemble <spec>`** — concat all scene MP4s, overlay the clean suno
+   audio → `final.mp4` (plus `final_vN.mp4` for each extra song variant).
+
+### Running the whole thing
+
+`music_video.py all <spec>` runs steps 3→9 in order. It STOPS automatically
+at gates 1 and 2 (controlled by `gate_confirm_song` / `gate_confirm_anchors`
+in the YAML, default both true). To run fully unattended, either flip both
+flags to `false` in `song.yaml` or pass `--no-gate`:
+
+```bash
+music_video.py all <spec>              # stops at gate 1, then gate 2
+music_video.py all --no-gate <spec>    # skip both gates, full autopilot
+```
+
+Restart-safe throughout: anything already on disk is skipped. Iterate
+individual scenes with `scene N song.yaml`.
+
+## Using with openclaw agents
+
+Any agent with `music-video` in its `agents.list[<id>].skills` array can run
+this skill end-to-end. The gates make it safe to delegate: the agent runs
+`all`, waits at gate 1, and posts the variants back for a human review.
+After renaming, the agent is prompted again and runs `all` a second time to
+pass gate 2, and so on.
+
+Example — asking Athena (`char6166r`) to start a project:
+
+```
+openclaw agents run char6166r --message "Start a music video project: create a song about <theme>, init it in your workspace, and launch the suno generation."
+```
+
+Athena will `init`, fill the YAML, run `song`, then report the variants back
+(gate 1). After a human renames the chosen variant, Athena resumes with
+scene authoring → `anchors` → gate 2 → `scenes` → `assemble`.
 
 ## Script paths (absolute; no `~`)
 
 - Sandbox (default): `/home/sandbox/.openclaw/skills/music-video/scripts/music_video.py`
-- Host (main/zeus): `~/.openclaw/skills/music-video/scripts/music_video.py`
+- Host (main/zeus): `/home/venetanji/.openclaw/skills/music-video/scripts/music_video.py`
 
-The script is a `uv run --script` shebang — no manual deps needed; uv pulls `pyyaml` + `imageio-ffmpeg` on first run.
+The script uses a `uv run --script` shebang with inline deps (`pyyaml`, `imageio-ffmpeg`). `uv` is preinstalled in the sandbox at `/usr/local/bin/uv`.
+
+**Invoke it via `uv run --script`** so deps auto-install:
+
+```bash
+# Sandbox:
+uv run --script /home/sandbox/.openclaw/skills/music-video/scripts/music_video.py <cmd> ...
+# Host:
+uv run --script /home/venetanji/.openclaw/skills/music-video/scripts/music_video.py <cmd> ...
+```
+
+Plain `python3 music_video.py …` will fail with `ModuleNotFoundError: yaml` unless you've already installed pyyaml in your env. Use `uv` instead — it's the designed path.
 
 ## Commands
 
 ```bash
+# Prefix every command below with the uv invocation above.
+music_video.py init <slug> [--theme=<text>] [--force]   # create project skeleton under ~/.openclaw/workspace/<slug>/ (sandboxed agents get /workspace/<slug>/)
 music_video.py plan     <spec.yaml>       # validate + show scene breakdown
-music_video.py song     <spec.yaml>       # suno only (3-5 min)
+music_video.py song     <spec.yaml>       # suno only — N*2 variants (spec.suno.runs)
+music_video.py anchors  <spec.yaml>       # flux2 top-level + per-scene anchors (idempotent)
 music_video.py scene N  <spec.yaml>       # one scene's ia2v (1-3 min)
-music_video.py assemble <spec.yaml>       # concat + overlay song audio
-music_video.py all      <spec.yaml>       # end-to-end
+music_video.py scenes   <spec.yaml>       # every scene in sequence
+music_video.py transitions <spec.yaml>    # LTX transition clips per boundary (runs if video.transitions.enabled)
+music_video.py assemble <spec.yaml>       # concat + overlay song audio (splices in transitions)
+music_video.py all      <spec.yaml> [--no-gate]   # end-to-end, stops at the 2 gates by default
 music_video.py status   <spec.yaml>       # what's already generated
 ```
 
@@ -112,13 +190,81 @@ Defaults to no LoRA if unset. Strength via `camera_lora_strength` (top-level
 default 0.8; overridable per-scene). Pair the LoRA name with a matching prose
 description of the same move in the prompt — the LoRA reinforces the intent.
 
-### Crossfades
+### Scene transitions (LTX, not ffmpeg)
 
-Set `video.crossfade: 0.5` (seconds) to apply an ffmpeg `xfade=transition=fade`
-at every scene boundary during `assemble`. Hides the stitching artifacts that
-can appear when passing one scene's last frame as the next scene's anchor
-(ia2v conditioning has some drift, so cuts aren't perfectly seamless). Costs
-a re-encode on assembly. Leave at 0 for hard cuts.
+Boundaries between `@last`-chained scenes usually land with a visible seam —
+ia2v conditioning drifts enough that adjacent scenes don't quite meet. The
+`transitions` stage renders a short LTX clip per boundary that morphs from
+scene A's tail into scene B's head, using real video guides from both
+sides (not still frames) so the motion continues across the cut.
+
+Enable + tune in `video.transitions`:
+
+```yaml
+video:
+  transitions:
+    enabled: true
+    duration: 4.0            # total transition length (seconds)
+    guide_sec: 1.0           # real-video guide on each side; middle = dur - 2*guide_sec
+    fps: 24
+    default_b_sparse: "96"   # "96" = 1 single B-anchor frame at the tail (default)
+                             # "72,80,88,96" = 4 sparse B-anchors (smoother into singing)
+```
+
+The resulting shape for a 4.0s / 1.0s boundary is **1s A-guide → 2s masked
+morph (audio drives the invention) → 1s that ends on scene B's head**.
+Assemble overlaps the transition with scene A's trailing `duration/2`s and
+scene B's leading `duration/2`s so the final timeline stays bit-exact with
+the song.
+
+**Per-boundary override** goes on the INCOMING scene (not scene A) via
+`transition_from_prev`:
+
+```yaml
+scenes:
+  - label: chorus_in           # boundary is prev_scene → this_scene
+    transition_from_prev:
+      duration: 4.0
+      b_sparse: "72,80,88,96"  # 4f — use INTO lipsync / singing scenes
+      prompt: "…optional override for this boundary's morph…"
+```
+
+**Defaults that work:** 4s duration, 1s guide, `default_b_sparse: "96"` (1f).
+4f (`"72,80,88,96"`) was empirically the sweet spot for boundaries into
+singing shots — more anchors prevent identity drift when the character
+immediately has to sing. Contiguous multi-frame B-blocks (e.g. 16 frames at
+positions 80-96) caused a mid-transition freeze at snap-in; always keep
+the B-side sparse (every 8 latent frames).
+
+### Multi-guide scenes (`guides:` field)
+
+A scene whose first frame can't/shouldn't show the character — e.g. opens
+on an empty landscape or a prop before the character enters — needs a
+mid-scene character anchor or LTX will invent a random identity. Add a
+`guides:` list with pre-rendered flux anchors at specific times:
+
+```yaml
+scenes:
+  - label: meets_hare
+    start_sec: 98.110
+    duration_sec: 13.630
+    image: "sheets/mid_anchors/hare_candle_first_00001_.png"   # candle only
+    prompt: "Wide dusk-meadow — a candle on a stone; {hare} cartwheels around it; {snakebird} shields the flame…"
+    guides:
+      - image: "sheets/mid_anchors/hare_character_00001_.png"
+        at_relative: 0.5         # halfway through the shot
+        strength: 1.0
+```
+
+Each guide entry: `image` (literal path, `@anchor`, or `@last`) + **one of**
+`at_sec` / `at_relative` (0..1) / `at_frame` + optional `strength` (default 1.0).
+Frame indices snap to multiples of 8 (LTX latent quantization). For long
+shots (13s+), add two guides (e.g. at 0.5 and 0.9) to hold identity through
+the whole shot — a single mid-anchor drifts by the tail.
+
+When `guides:` is present, the scene renders via LTX multiguide (chained
+`LTXVAddGuide`). The shared implementation lives in the `storyboard` skill
+(`lib/guides.py`) so drama-video and one-off renders use the same resolver.
 
 A fuller reference with all optional fields is at `references/example.yaml`. Format details in `references/song-format.md`.
 
@@ -177,5 +323,4 @@ A fuller reference with all optional fields is at `references/example.yaml`. For
 ## Advanced (not in v1)
 
 - Beat detection & waveform-linked light effects → not implemented. If needed, add a separate post-process pass with ffmpeg's `showwaves` / `asetnsamples` + blend modes, fed by a beat track from `librosa.onset.onset_strength`.
-- Cross-fades at scene boundaries → currently hard cuts. Add xfade via `video_join.py` extension if needed.
 - Lyric subtitles → not generated. Add an SRT track separately.
