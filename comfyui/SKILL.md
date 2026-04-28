@@ -2,11 +2,10 @@
 name: comfyui
 description: >
   Generate images and videos using ComfyUI workflows via direct REST API at
-  https://comfyui.tail9683c.ts.net. Also manages character reference image downloads
-  from HuggingFace. Use when asked to create images, edit photos, generate videos,
-  or run Flux/LTX2/Wan workflows. Triggers on: generate an image, create a video,
-  Flux2, ComfyUI, text-to-image, image-to-image, image-to-video, character image,
-  Athena, scene generation, TTS, voice clone, workflow.
+  https://comfyui.tail9683c.ts.net. Use when asked to create images, edit photos,
+  generate videos, or run Flux/LTX2/Wan workflows. Triggers on: generate an image,
+  create a video, Flux2, ComfyUI, text-to-image, image-to-image, image-to-video,
+  scene generation, TTS, voice clone, workflow.
 ---
 
 # ComfyUI Skill
@@ -71,67 +70,21 @@ wget -P text_encoders https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_
 
 The skill defaults to `gemma_3_12B_it_fp8_e4m3fn.safetensors` (fp8 variant) for faster inference.
 
-## Character Reference Images (HuggingFace)
-
-All 84 character reference images are on HuggingFace:
-**Dataset:** `venetanji/polyu-storyworld-characters`
-
-### Download
-```bash
-# Download all characters (~420 images)
-HF_TOKEN=<YOUR_HF_TOKEN> \
-python3 /home/sandbox/.openclaw/skills/comfyui/scripts/download_characters.py
-
-# Download specific characters only
-HF_TOKEN=<YOUR_HF_TOKEN> \
-python3 /home/sandbox/.openclaw/skills/comfyui/scripts/download_characters.py 6166r 1822g
-```
-
-**Storage:** `~/.openclaw/skills/storyworld/references/<code>/` (e.g. `~/.openclaw/skills/storyworld/references/6166r/`)
-- Multiple reference images per character (e.g. `1.png`, `2.jpg`, `img3.jpeg`)
-- `.txt` files alongside each image contain tag-based captions
-
-### Generate with Character References
-```bash
-# 1. Upload Athena's reference image to ComfyUI
-python3 -c "
-import sys; sys.path.insert(0,'~/.openclaw/skills/comfyui/scripts')
-from core import upload_if_local
-name = upload_if_local('~/.openclaw/skills/storyworld/references/6166r/1.png')
-print(name)
-"
-
-# 2. Use in i2i — reference image guides the generation
-python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py i2i \
-  --image /path/to/uploaded/6166r_1.png \
-  --prompt "Athena walking through a moonlit forest, dramatic portrait" \
-  --steps 12 --seed 42
-```
-
-### Workflow for "Generate image of character 6166r"
-1. Read YAML: `~/.openclaw/skills/storyworld/characters/6166r.yaml` → character description
-2. Read captions: `~/.openclaw/skills/storyworld/references/6166r/*.txt`
-3. Pick best reference image (e.g. `1.png` — usually the primary front view)
-4. Upload to ComfyUI via `upload_if_local()`
-5. Build i2i prompt: combine YAML description + reference caption
-6. Run `flux2_single_image_edit` via comfy_graph.py i2i
-7. Download → crop → send to Discord
-
-**No MCP needed.** All assets are local. The MCP is only needed for MCP-aware tools (not used here).
+## Quickstart examples
 
 ```bash
 # Image generation (text-to-image)
 python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py t2i \
-  --prompt "Athena in a forest"
+  --prompt "<your-character> in a forest"
 
 # Image-to-image with reference
 python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py i2i \
-  --image athena_ref.png \
-  --prompt "Athena riding a white horse"
+  --image <reference.png> \
+  --prompt "<your-character> riding a white horse"
 
 # Text-to-video
 python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py t2v \
-  --prompt "Athena walking through ancient ruins" \
+  --prompt "<your-character> walking through ancient ruins" \
   --seconds 5
 
 # Query server state
@@ -140,6 +93,19 @@ python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_query.py stats
 # Run workflow from JSON
 python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_run.py workflow.json --output-dir /tmp/imgs
 ```
+
+## Working with named character references
+
+For storyworld-style workflows where you have a named character with
+multiple reference images (cataloged on HuggingFace, with structured
+yaml metadata), see the companion skill:
+
+  https://github.com/venetanji/polyu-storyworld/tree/main/skills/storyworld-references
+
+That skill handles HuggingFace dataset downloads, character-yaml lookup,
+and reference-image selection; it calls into this comfyui skill for
+the actual t2i / i2i / video generation. They are intentionally
+separate so this skill stays generic.
 
 ## Script Inventory
 
