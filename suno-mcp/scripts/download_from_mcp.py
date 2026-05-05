@@ -57,7 +57,7 @@ def download_song(song_id, output_dir=None, max_wait=120):
         # Continue anyway - file might already be available
     
     # Poll for file availability at MCP server
-    mcp_audio_url = f"http://localhost:8085:8085/audio/{song_id}.mp3"
+    mcp_audio_url = f"http://localhost:8085/audio/{song_id}.mp3"
     
     print(f"Waiting for file at {mcp_audio_url}...", file=sys.stderr)
     
