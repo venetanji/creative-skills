@@ -10,10 +10,13 @@ Usage:
 
   --until-file: stop when this file appears (e.g. project/final.mp4).
   --max-minutes N: stop after N minutes regardless.
+  --base URL: ComfyUI server. Defaults to $COMFY_URL_VIDEO → $COMFY_URL →
+              the video server, since music-video runs are where VRAM peaks
+              actually matter (LTX, not flux).
 
 Exits silently on stop. Safe to run alongside a long-running gen job.
 """
-import argparse, json, sys, time, urllib.request
+import argparse, json, os, time, urllib.request
 from pathlib import Path
 
 
@@ -39,7 +42,10 @@ def sample(base: str) -> dict | None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("log")
-    p.add_argument("--base", default="https://comfyui.tail9683c.ts.net")
+    p.add_argument("--base",
+                   default=(os.environ.get("COMFY_URL_VIDEO")
+                            or os.environ.get("COMFY_URL")
+                            or "https://comfyui-video.tail9683c.ts.net"))
     p.add_argument("--interval", type=float, default=10.0)
     p.add_argument("--until-file", default=None)
     p.add_argument("--max-minutes", type=float, default=None)
