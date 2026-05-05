@@ -117,6 +117,16 @@ An agent asks the user for a song concept → hand-writes a YAML (style brief, l
 
 The orchestrator invokes `suno-mcp/scripts/generate_song.py` for the song, `comfyui/scripts/comfy_graph.py {t2i,i2i,i2i2,multiprompt}` for per-scene anchor generation, and `comfyui/scripts/comfy_graph.py ia2v` for each scene's animated clip. Final assembly is ffmpeg (via `imageio-ffmpeg`) in the orchestrator itself. When one song generation produces multiple variants (suno always does), `assemble` emits one `final_vN.mp4` per variant against the same scene visuals.
 
+## Example projects
+
+Ready-made YAML inputs (one project per song) live in the companion repo
+[`venetanji/creative-scripts`](https://github.com/venetanji/creative-scripts).
+Pick one, copy it as `song.yaml` into a fresh project dir, supply the
+`anchor.png` the spec expects, and run `music_video.py all`. The current
+catalog includes folk noir, shoegaze, dreampop, and a 70s-disco lipsync
+pipeline (`glitter-down.yaml`) — see that repo's `README.md` for the
+full table.
+
 ## Install
 
 These are AgentSkill directories. Drop them wherever your runtime expects skills:
