@@ -1,7 +1,17 @@
 # ComfyUI API Reference
 
-**Base URL:** `https://comfyui.tail9683c.ts.net`
-**Version:** 0.17.0 | GPU: RTX 3080 Ti 12GB | PyTorch 2.10+cu130
+The deployment has **two ComfyUI servers** behind the skill's CLI:
+
+| Workload | Base URL | GPU |
+|---|---|---|
+| Flux/images, TTS, audio post | `https://comfyui.tail9683c.ts.net` | RTX 3080 Ti 12GB |
+| LTX-2.3 video | `https://comfyui-video.tail9683c.ts.net` | RTX 3090 24GB |
+
+`comfy_graph.py` routes by command class; override per-class with
+`COMFY_URL_FLUX` / `COMFY_URL_VIDEO`, or force a single endpoint with
+`COMFY_URL`. Examples below assume the flux server.
+
+**Version:** 0.17.0 | PyTorch 2.10+cu130
 
 ---
 

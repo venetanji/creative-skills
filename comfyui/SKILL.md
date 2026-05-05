@@ -12,7 +12,11 @@ description: >
 
 Direct ComfyUI REST API access for image and video generation.
 
-**ComfyUI:** https://comfyui.tail9683c.ts.net | **RTX 3090 24GB** | v0.16.1
+**ComfyUI servers (split by workload):**
+- **Flux/images, TTS, audio post:** `https://comfyui.tail9683c.ts.net` (RTX 3080 Ti 12GB)
+- **LTX video:** `https://comfyui-video.tail9683c.ts.net` (RTX 3090 24GB)
+
+`comfy_graph.py` auto-routes by command (image/audio/tts → flux server, video commands → video server). Override per-server via `COMFY_URL_FLUX` / `COMFY_URL_VIDEO`, or force a single endpoint with `COMFY_URL`.
 
 ## Script paths (use absolute; tilde expansion is unreliable under `exec`)
 
@@ -249,8 +253,8 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 - `--fast` *(video only: t2v/i2v/ia2v/flf2v)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
 
 ### Environment variables
-- `COMFY_URL` — ComfyUI server URL (default: `https://comfyui.tail9683c.ts.net`)
-- `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — pre-set in the sandbox env so you don't need to prefix commands with `COMFY_URL=…`. Just run `comfy_graph.py t2i …` — sandbox already knows.
+- `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — separate endpoints for the flux (image/TTS/audio) and video servers. Pre-set in the sandbox env, so most agents can just run `comfy_graph.py t2i …` — the right server is picked automatically.
+- `COMFY_URL` — single-server fallback (used as default when the per-class env var is unset, and by `comfy_run.py` / `comfy_query.py` which talk to one server at a time). Default `https://comfyui.tail9683c.ts.net` (the flux server).
 - `OPENCLAW_NOTIFY_TARGET` — default notification target
 
 ### Discord attachments — `MEDIA:` directive in your reply
