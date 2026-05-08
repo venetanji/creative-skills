@@ -45,26 +45,58 @@ downstream scene — don't skip the gates unless you're sure.
    pick the one you want, back up or delete `song.mp3`, then rename your
    chosen variant to `song.mp3`. Keep the others as `song_vN.mp3` — they
    become parallel `final_vN.mp4` renders during assembly.
-5. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
+5. **MANDATORY — transcribe the chosen song for word-level timestamps.**
+   You cannot eyeball scene `start_sec`/`duration_sec`. Whisper STT against
+   the actual mp3 is the source of truth. Run:
+
+   ```bash
+   # comfy_graph.py uploads the mp3 to ComfyUI's input dir, runs
+   # 'Apply Whisper' + 'Save SRT', and downloads three artefacts to the
+   # spec dir: <prefix>.txt (plain transcript), <prefix>_segments.srt
+   # (line-level cues), <prefix>_words.srt (per-word cues — use this for
+   # lipsync alignment). On extracted vocals it's cleaner; the full mix
+   # works for getting line-level boundaries.
+   comfy_graph.py stt --audio song.mp3 --prefix <slug> \
+     --output-dir <project-dir> --language English
+   ```
+
+   Use the segment SRT cues to set `start_sec`/`duration_sec` so each
+   scene starts on a vocal phrase boundary and ends just before the
+   next one. The orchestrator will slice the song audio per scene at
+   exactly these boundaries, so misalignment shows up as words cut in
+   half across scene cuts.
+
+   **Bridge note (agentic-media):** if STT fails with HTTP 413, the
+   ComfyUI-bridge is enforcing a body size limit on `/upload/image`.
+   Re-encode the mp3 down with the bundled imageio-ffmpeg:
+   `ffmpeg -i song.mp3 -c:a libmp3lame -b:a 24k -ar 16000 -ac 1 song_stt.mp3`
+   — the small file is for STT only; do NOT use it as the ia2v audio
+   source.
+
+6. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
    `duration_sec`, `prompt`, `image` (`@anchor | @last | path`). Optionally
    give a scene an `anchor:` block to pre-render a flux2 key frame for it.
-6. **`anchors <spec>`** — flux2 renders the top-level `anchor_image` (from
+   Lift `start_sec`/`duration_sec` straight from `<prefix>_segments.srt`
+   (step 5); each scene's span should land on a vocal-phrase boundary,
+   and total duration must equal the song length (probe with
+   `ffmpeg -i song.mp3` if unknown).
+7. **`anchors <spec>`** — flux2 renders the top-level `anchor_image` (from
    `anchor_prompt`, or fallback `title + style`) plus any per-scene anchors.
    Idempotent — skips files already on disk.
-7. **QUALITY GATE 2 — review the anchors.** Open every PNG under
+8. **QUALITY GATE 2 — review the anchors.** Open every PNG under
    `<project>/` and `<project>/scenes/`. If anything is wrong (wrong face,
    wrong mood, bad composition), DELETE that PNG and re-run `anchors <spec>`
    — tweak the scene's `anchor.prompt` or top-level `anchor_prompt` first.
    A bad base anchor propagates into every LTX scene that chains off it.
-8. **`scenes <spec>`** — renders every scene (LTX ia2v with the song slice +
+9. **`scenes <spec>`** — renders every scene (LTX ia2v with the song slice +
    resolved image). Restart-safe. Iterate one at a time with
    `scene N <spec>`.
-9. **`assemble <spec>`** — concat all scene MP4s, overlay the clean suno
-   audio → `final.mp4` (plus `final_vN.mp4` for each extra song variant).
+10. **`assemble <spec>`** — concat all scene MP4s, overlay the clean suno
+    audio → `final.mp4` (plus `final_vN.mp4` for each extra song variant).
 
 ### Running the whole thing
 
-`music_video.py all <spec>` runs steps 3→9 in order. It STOPS automatically
+`music_video.py all <spec>` runs steps 3→10 in order. It STOPS automatically
 at gates 1 and 2 (controlled by `gate_confirm_song` / `gate_confirm_anchors`
 in the YAML, default both true). To run fully unattended, either flip both
 flags to `false` in `song.yaml` or pass `--no-gate`:
