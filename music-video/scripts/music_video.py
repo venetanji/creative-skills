@@ -515,26 +515,34 @@ def cmd_song(spec: dict, project: Path) -> None:
 
 
 def _slice_song(project: Path, scene: dict, stem: str,
-                tail_buffer_sec: float = 0.0) -> Path:
+                tail_buffer_sec: float = 0.0,
+                source_path: Path | None = None) -> Path:
     """Slice the song for LTX audio conditioning. tail_buffer_sec extends the
     slice past the scene's nominal end so LTX has audio lookhead to finish
     the phoneme / close the mouth — otherwise the mouth freezes mid-word at
     scene boundary. Extra tail is absorbed by crossfade=tail_buffer in
-    assembly so the timeline doesn't drift."""
+    assembly so the timeline doesn't drift.
+
+    source_path: optional override for the audio source (defaults to
+    project/song.mp3). Use this to feed LTX a vocal-forward remix
+    (vocals + backing vocals boosted) for cleaner lipsync conditioning,
+    while still keeping song.mp3 as the canonical full-mix track for
+    assembly. See video.lipsync_audio in the spec."""
     slice_mp3 = project / "song_slices" / f"{stem}.mp3"
     if slice_mp3.exists():
         return slice_mp3
     ffmpeg = FFMPEG()
+    src = source_path if source_path is not None else (project / "song.mp3")
     total = float(scene["duration_sec"]) + float(tail_buffer_sec)
     cmd = [ffmpeg, "-y", "-ss", str(scene["start_sec"]),
            "-t",  str(total),
-           "-i",  str(project / "song.mp3"),
+           "-i",  str(src),
            "-c",  "copy", str(slice_mp3)]
     rc = subprocess.run(cmd, capture_output=True).returncode
     if rc != 0:
         rc = subprocess.run([ffmpeg, "-y", "-ss", str(scene["start_sec"]),
                              "-t",  str(total),
-                             "-i",  str(project / "song.mp3"),
+                             "-i",  str(src),
                              "-c:a", "libmp3lame", "-b:a", "192k", str(slice_mp3)],
                             capture_output=True).returncode
         if rc != 0:
@@ -827,8 +835,18 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     tail_buffer = float(vs.get("tail_buffer_sec", 0.0))
     effective_duration = float(scene["duration_sec"]) + (tail_buffer if is_lipsync else 0.0)
 
+    # video.lipsync_audio: optional path (relative to project) of an
+    # alternate audio source to use for ia2v conditioning — typically a
+    # vocal-forward remix that boosts vocals + backing vocals so LTX's
+    # audio head locks onto lyric content. Full-mix song.mp3 still wins
+    # at assembly time.
+    lipsync_audio_name = vs.get("lipsync_audio")
+    lipsync_src = (project / lipsync_audio_name).resolve() if lipsync_audio_name else None
+    if lipsync_src and not lipsync_src.exists():
+        sys.exit(f"video.lipsync_audio points at {lipsync_src} which does not exist")
     slice_mp3 = _slice_song(project, scene, stem,
-                            tail_buffer_sec=tail_buffer if is_lipsync else 0.0)
+                            tail_buffer_sec=tail_buffer if is_lipsync else 0.0,
+                            source_path=lipsync_src)
 
     # Prefer a scene-specific pre-generated anchor (flux2) when scene.anchor is set.
     # Falls back to the @last/@anchor/literal image chain otherwise.
