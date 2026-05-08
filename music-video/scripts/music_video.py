@@ -878,9 +878,15 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         cmd = ["python3", str(COMFY), "t2v"] + common
     elif guides_yaml:
         import importlib.util
-        sb_lib = Path("/home/sandbox/.openclaw/skills/storyboard/lib/guides.py")
-        if not sb_lib.exists():
-            sb_lib = Path("/home/venetanji/.openclaw/skills/storyboard/lib/guides.py")
+        # Resolve storyboard/lib/guides.py from a sandbox install, the host
+        # venetanji install, or — when neither exists — from the repo
+        # checkout sibling to this script (../../storyboard/lib/guides.py).
+        sb_candidates = [
+            Path("/home/sandbox/.openclaw/skills/storyboard/lib/guides.py"),
+            Path("/home/venetanji/.openclaw/skills/storyboard/lib/guides.py"),
+            Path(__file__).resolve().parent.parent.parent / "storyboard/lib/guides.py",
+        ]
+        sb_lib = next((p for p in sb_candidates if p.exists()), sb_candidates[-1])
         spec_gm = importlib.util.spec_from_file_location("storyboard_guides", sb_lib)
         gm = importlib.util.module_from_spec(spec_gm); spec_gm.loader.exec_module(gm)
 
@@ -1179,9 +1185,12 @@ def cmd_assemble(spec: dict, project: Path) -> None:
     # drama-video uses). Pre-trim → strip audio → concat → mux song.
     ffmpeg = FFMPEG()
     import importlib.util
-    sb_lib = Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py")
-    if not sb_lib.exists():
-        sb_lib = Path("/home/venetanji/.openclaw/skills/storyboard/lib/assemble.py")
+    sb_candidates = [
+        Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py"),
+        Path("/home/venetanji/.openclaw/skills/storyboard/lib/assemble.py"),
+        Path(__file__).resolve().parent.parent.parent / "storyboard/lib/assemble.py",
+    ]
+    sb_lib = next((p for p in sb_candidates if p.exists()), sb_candidates[-1])
     m_spec = importlib.util.spec_from_file_location("storyboard_assemble", sb_lib)
     asm = importlib.util.module_from_spec(m_spec); m_spec.loader.exec_module(asm)
 
