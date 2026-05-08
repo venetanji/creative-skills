@@ -236,21 +236,25 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 | `i2iNmulti` | **Batch N prompts × N refs** → N outputs / 1 submission | `--images a,b,c`, `--prompts`, `--prepend`, `--append` |
 | `t2v` | Text-to-video (LTX-2.3, two-pass) | `--prompt`, `--seconds`, `--fps`, `--width`, `--height` |
 | `i2v` | Image-to-video (LTX-2.3, first-frame + refine) | `--image`, `--prompt`, `--seconds`, `--fps` |
-| `ia2v` | Image + audio to audio-reactive video | `--image`, `--audio`, `--prompt`, `--seconds`, `--fps` |
-| `flf2v` | First+last frame to video (LTX-2.3, single-pass) | `--first`, `--last`, `--prompt`, `--seconds`, `--fps`, `--guide-strength` |
+| `ia2v` | Image + audio to audio-reactive video | `--image`, `--audio`, `--prompt`, `--seconds`, `--fps`, `--image_refs a,b,c`, `--base_guide_strength 0.5`, `--refine_guide_strength 0.3`, `--identity_anchor`, `--identity_strength 0.3` |
+| `flf2v` | First+last frame to video (LTX-2.3, two-pass; default fps=25) | `--first`, `--last`, `--prompt`, `--seconds`, `--fps`, `--guide_strength`, `--use_transition_lora` |
+| `continuation` | Extend an existing video (LTX-2.3, two-pass) | `--prev_video`, `--prompt`, `--seconds`, `--audio`, `--overlap_seconds 1.0`, `--overlap_strength 1.0`, `--prev_frames N` (bypass ffprobe) |
+| `multiguide` | N image guides at N latent positions (LTX-2.3) | `--guides a.png,b.png,...`, `--frame_indices 0,96,168`, `--strengths 1.0,1.0,1.0`, `--audio`, `--no_transition_lora 1` (transition LoRA is **on by default** here) |
 | `transition` | Song-aligned morph between two clips (LTX-2.3) | `--prev_video`, `--next_video`, `--audio`, `--seconds`, `--mask_start_sec`, `--mask_end_sec`, `--use_addguide 1`, `--multiframe_guide 24`, `--multiframe_guide_last 1`, `--b_sparse_latent_positions "96"` or `"72,80,88,96"` |
-| `multiguide` | N image guides at N latent positions (LTX-2.3) | `--guides a.png,b.png,...`, `--frame_indices 0,96,168`, `--strengths 1.0,1.0,1.0`, `--audio`, `--no_transition_lora 1` (when not a transition) |
 | `tts` | Text-to-speech (Qwen3 TTS) | `--text`, `--prefix` |
+| `stems` | Vocals + instrumental split (MelBandRoFormer) | `--audio`, `--model`, `--prefix` |
+| `stt` | Whisper transcription → txt + word/segment SRTs | `--audio`, `--model_size large-v3-turbo`, `--language auto`, `--prefix` |
+| `vconcat` | Concatenate clips, optionally with audio | `--videos a.mp4,b.mp4,...`, `--audio`, `--fps 24`, `--trim_durations`, `--trim_starts`, `--fast` / `--no-fast` |
+| `last_frame` | Extract last frame from a **server-side** video path | `--video_path` (must be an absolute path on the ComfyUI server, not a local file) |
 | `run` | Submit any workflow JSON (file or stdin) | `--file workflow.json` or `cat wf.json \| ... run` |
-| `dump` | Print workflow JSON, no execution | workflow command + options |
-| `last_frame` | Extract last frame from video | `--video-path` |
+| `dump` | Print workflow JSON, no execution | prefix any workflow command (e.g. `dump t2i …`) |
 
 ### Global options
 - `--notify-target <target>` — OpenClaw notification target (e.g. `discord:1486985676066000957`)
 - `--output-dir <path>` — local output directory (default: `outputs/`)
 - `--timeout <seconds>` — generation timeout
 - `--seed <int>` — random seed for reproducibility
-- `--fast` *(video only: t2v/i2v/ia2v/flf2v)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
+- `--fast` *(any video command: t2v/i2v/ia2v/flf2v/continuation/multiguide/transition)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
 
 ### Environment variables
 - `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — separate endpoints for the flux (image/TTS/audio) and video servers. Pre-set in the sandbox env, so most agents can just run `comfy_graph.py t2i …` — the right server is picked automatically.
@@ -295,12 +299,12 @@ places them in the right spot.
 - **Upscaler (between passes):** `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` via `LatentUpscaleModelLoader`
 - **LoRA:** `ltx-2.3-22b-distilled-lora-384.safetensors` at **strength 0.6** — applied on ALL flows (t2v/i2v/ia2v/flf2v). This reproduces the distilled checkpoint behaviour on top of the dev-fp8 checkpoint we have installed; without it the 8-step schedule under-denoises and output is badly blurred.
 - **Pass 1 (coarse, 9 steps):** `euler_ancestral_cfg_pp` + ManualSigmas `"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"`, raw `LTXVConditioning`
-- **Between passes:** Separate AV → `LTXVLatentUpsampler` → re-apply image via `LTXVImgToVideoInplace(strength=1.0)` (i2v/ia2v only) → re-concat with audio → `LTXVCropGuides` on coarse video latent for conditioning
+- **Between passes:** Separate AV → `LTXVLatentUpsampler` → re-apply image via `LTXVImgToVideoInplace(strength=refine_guide_strength, default 0.3)` (i2v/ia2v only) → re-concat with audio → `LTXVCropGuides` on coarse video latent for conditioning. Historical `strength=1.0` hard-locked the opening frames and is no longer used.
 - **Pass 2 (refine, 4 steps):** `euler_cfg_pp` + ManualSigmas `"0.85, 0.7250, 0.4219, 0.0"`, cropped conditioning
 - **Always AV-concat:** All three variants (t2v/i2v/ia2v) use `LTXVConcatAVLatent`/`LTXVSeparateAVLatent`. For non-audio variants, `LTXVEmptyLatentAudio` provides a blank audio side. This keeps one graph shape.
 - **Length:** `(seconds × fps)` rounded to `≡ 1 (mod 8)`
 - **Audio for ia2v:** `LoadAudio` → `TrimAudioDuration` → `LTXVAudioVAEEncode` → `SetLatentNoiseMask` (with zero-valued `SolidMask`)
-- **flf2v (first-last frame):** adapted from the `Comfy-Org/workflow_templates` flf2v template into the same two-pass shape as the other flows. Pass-1 uses chained `LTXVAddGuide` (frame_idx=0 + frame_idx=-1 at strength 0.7) on the base latent; pass-2 re-injects both guides at strength 1.0 on the upsampled latent. Post-decode `LTXVCropGuides` strips the injected guide frames so the output doesn't show the raw input images as first/last frames (use `--fast` to keep the single-pass shape the template originally had).
+- **flf2v (first-last frame):** adapted from the `Comfy-Org/workflow_templates` flf2v template into the same two-pass shape as the other flows. Pass-1 uses chained `LTXVAddGuide` (frame_idx=0 + frame_idx=-1 at strength 0.7) on the base latent; pass-2 re-injects both guides at strength 1.0 on the upsampled latent. Post-decode `LTXVCropGuides` strips the injected guide frames so the output doesn't show the raw input images as first/last frames (use `--fast` to keep the single-pass shape the template originally had). Default `fps=25` here (every other video command defaults to 24); pass `--fps 24` for concat-friendly output. Transition LoRA is **off by default** (opt-in with `--use_transition_lora`) — the inverse convention from `multiguide`, where it is on by default and disabled via `--no_transition_lora 1`.
 - **multiguide (N-anchor):** chained `LTXVAddGuide` calls, one per guide, each
   at its specified latent `frame_idx` (snapped to 8 upstream). Used by
   music-video's `guides:` scene field to anchor identity mid-shot when the

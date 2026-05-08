@@ -32,13 +32,22 @@ python3 scripts/comfy_graph.py multiprompt --image a.png --prompts "angle1\nangl
 python3 scripts/comfy_graph.py t2v   --prompt "..."  --seconds 10        # LTX-2.3 text-to-video
 python3 scripts/comfy_graph.py i2v   --image ref.png --prompt "..."      # LTX-2.3 image-to-video
 python3 scripts/comfy_graph.py ia2v  --image ref.png --audio a.mp3 ...   # LTX-2.3 audio-reactive video
-python3 scripts/comfy_graph.py flf2v --first a.png --last b.png ...      # LTX-2.3 first-last-frame
+python3 scripts/comfy_graph.py flf2v --first a.png --last b.png ...      # LTX-2.3 first-last-frame (default fps=25)
+python3 scripts/comfy_graph.py continuation  --prev_video prev.mp4 \
+        --prompt "..."  --seconds 8  --audio slice.mp3                   # LTX-2.3 extend an existing clip
 python3 scripts/comfy_graph.py multiguide  --guides a.png,b.png,c.png \
         --frame_indices 0,96,168  --strengths 1.0,1.0,1.0 ...            # LTX-2.3 N-anchor chain
 python3 scripts/comfy_graph.py transition  --prev_video a.mp4 \
         --next_video b.mp4  --audio slice.mp3 ...                        # LTX-2.3 song-aligned morph
 python3 scripts/comfy_graph.py tts   --text "..."                        # Qwen3 TTS
+python3 scripts/comfy_graph.py stems --audio song.mp3                    # vocals + instrumental split
+python3 scripts/comfy_graph.py stt   --audio vocals.flac                 # whisper transcript + SRTs
+python3 scripts/comfy_graph.py vconcat --videos a.mp4,b.mp4 --audio s.mp3  # multi-clip concat
+python3 scripts/comfy_graph.py last_frame --video_path /server/path/to/clip.mp4  # SERVER-SIDE path
+python3 scripts/comfy_graph.py dump  t2i --prompt "..."                  # print workflow JSON, no execute
 ```
+
+Add `dump` as a prefix to any workflow command for a side-effect-free preview of the workflow JSON. Useful for diffing against `object_info` to detect node-class drift after a ComfyUI upgrade.
 
 Flags shared across video commands: `--fps`, `--width`, `--height`, `--seconds`, `--seed`, `--negative`, `--camera-lora {static|dolly-{in,out,left,right}|jib-{up,down}}`, `--camera-lora-strength`, `--fast` (skip 2-pass refine).
 
