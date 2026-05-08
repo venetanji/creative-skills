@@ -707,6 +707,9 @@ def cmd_anchors(spec: dict, project: Path) -> None:
                 sys.exit("top-level anchor generation failed")
             candidates = sorted(project.glob(f"{prefix}_*.png"),
                                 key=lambda p: p.name)
+            # When anchor_image points at a subdir (e.g. `scene_anchors/foo.png`)
+            # the destination parent must exist before rename.
+            anchor_path.parent.mkdir(parents=True, exist_ok=True)
             if not candidates:
                 # flux2 may also drop .png without the _NNNNN_ suffix depending
                 # on comfy settings; check bare name too.
