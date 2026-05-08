@@ -47,15 +47,14 @@ downstream scene — don't skip the gates unless you're sure.
    become parallel `final_vN.mp4` renders during assembly.
 5. **MANDATORY — transcribe the chosen song for word-level timestamps.**
    You cannot eyeball scene `start_sec`/`duration_sec`. Whisper STT against
-   the actual mp3 is the source of truth. Run:
+   the actual audio is the source of truth. Run:
 
    ```bash
-   # comfy_graph.py uploads the mp3 to ComfyUI's input dir, runs
+   # comfy_graph.py uploads the audio to ComfyUI's input dir, runs
    # 'Apply Whisper' + 'Save SRT', and downloads three artefacts to the
    # spec dir: <prefix>.txt (plain transcript), <prefix>_segments.srt
    # (line-level cues), <prefix>_words.srt (per-word cues — use this for
-   # lipsync alignment). On extracted vocals it's cleaner; the full mix
-   # works for getting line-level boundaries.
+   # lipsync alignment).
    comfy_graph.py stt --audio song.mp3 --prefix <slug> \
      --output-dir <project-dir> --language English
    ```
@@ -66,12 +65,26 @@ downstream scene — don't skip the gates unless you're sure.
    exactly these boundaries, so misalignment shows up as words cut in
    half across scene cuts.
 
-   **Bridge note (agentic-media):** if STT fails with HTTP 413, the
-   ComfyUI-bridge is enforcing a body size limit on `/upload/image`.
-   Re-encode the mp3 down with the bundled imageio-ffmpeg:
+   **If you have separated stems (e.g. from Suno's stem-export tool, or
+   `comfy_graph.py stems` on the full mix), transcribe the relevant stems
+   individually and merge.** Lead vocals, backing vocals, and the full
+   mix can each surface lines the others miss:
+   - Lead-vocal stem alone may drop hooks/answer-phrases that live only
+     in the backing-vocals layer (e.g. a refrain "Stable altitude"
+     answered only by the backing vocal).
+   - Whisper on the full mix can hallucinate text where backing-vocal
+     bleed sounds like a vocal phrase.
+   Run STT on each stem with a different `--prefix`, diff the segment
+   SRTs, and reconcile timing conflicts in favour of the cleanest stem
+   for each line. Don't trust a single pass.
+
+   **Defensive note:** if `stt` fails with HTTP 413, your ComfyUI server
+   (or the proxy in front of it) has a body-size limit on `/upload/image`
+   below your audio file's size. Either fix the proxy or re-encode the
+   audio for the STT pass only:
    `ffmpeg -i song.mp3 -c:a libmp3lame -b:a 24k -ar 16000 -ac 1 song_stt.mp3`
-   — the small file is for STT only; do NOT use it as the ia2v audio
-   source.
+   — that re-encoded copy is fine for transcription but do NOT use it as
+   the ia2v audio source (LTX's audio VAE wants the full-quality input).
 
 6. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
    `duration_sec`, `prompt`, `image` (`@anchor | @last | path`). Optionally
