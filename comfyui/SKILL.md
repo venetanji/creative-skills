@@ -383,6 +383,28 @@ sessions_spawn({
 
 The subagent runs inside the same shared sandbox, does the long gen + delivery, and auto-announces completion to the main session when done. You (the main agent) are free to continue talking.
 
+## Recovery from client-side timeout
+
+`comfy_graph.py` polls `/history/<prompt_id>` every 2 seconds with a per-request 15s timeout. If the bridge or the server hiccups long enough for the polling deadline to expire — or if the comfy server restarts mid-render and wipes its history — the client raises `TimeoutError("Timed out after Ns")` even though the GPU may have finished the render and saved the file.
+
+Before re-running an expensive scene, check the server directly with `comfy_query.py`:
+
+```bash
+# Is anything running / queued?
+COMFY_URL=https://comfyui-bridge.tail74c072.ts.net:8189 \
+  python3 comfy_query.py queue
+
+# Did the prompt complete? (history is keyed by prompt_id, printed at start of run)
+COMFY_URL=… python3 comfy_query.py history <prompt_id>
+
+# Pull the file directly if the server still has it:
+curl -O "https://comfyui-bridge.tail74c072.ts.net:8189/view?filename=<name>&type=output"
+```
+
+Useful even when history is empty — the queue still tells you whether the GPU is running, idle, or has the job pending.
+
+If the server was restarted (history empty, queue empty, file not at `/view?filename=…&type=output`), the render genuinely needs to be re-run. Otherwise you can recover the asset for free.
+
 ## Troubleshooting
 
 ### HTTP 400 "Node 'LatentAddNoise' not found"
