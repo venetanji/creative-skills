@@ -563,7 +563,7 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
                                base_guide_strength=0.5,
                                refine_guide_strength=0.3,
                                identity_anchor_image=None,
-                               identity_strength=0.6,
+                               identity_strength=0.3,
                                checkpoint_name=None, text_encoder=None,
                                **_):
     """Image+Audio → Video.
@@ -582,8 +582,9 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
     return _build(prompt, fps=fps, width=width, height=height, length=length,
                   seed=seed, filename_prefix=filename_prefix,
                   image_ref_builder=lambda g: _image_branch_multi(g, all_refs, width, height),
-                  audio_ref_builder=lambda g, avae, w, h:
-                      _audio_from_file(g, audio_filename, seconds, w, h, avae),
+                  audio_ref_builder=lambda g, avae, w, h, length=length, fps=fps:
+                      _audio_from_file(g, audio_filename, seconds, w, h, avae,
+                                       length=length, fps=fps),
                   negative=negative, fast=fast,
                   camera_lora=camera_lora, camera_lora_strength=camera_lora_strength,
                   base_guide_strength=base_guide_strength,

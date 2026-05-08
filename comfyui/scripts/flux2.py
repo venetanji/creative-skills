@@ -181,7 +181,7 @@ def flux2_multiple_angles(image_filename, angle_prompts, prepend="", append="",
                            unet_name="flux-2-klein-9b-fp8.safetensors",
                            vae_name="flux2-vae.safetensors",
                            clip_name="qwen_3_8b_fp8mixed.safetensors",
-                           steps=8, lora=None, lora_strength=1.0):
+                           steps=8, lora=None, lora_strength=1.0, seed=None):
     g = WorkflowGraph()
     model, vae, clip = _load_models(g, unet_name, vae_name, clip_name, lora, lora_strength)
     batcher= g.node("SimplePromptBatcher", prepend=prepend,
@@ -198,7 +198,8 @@ def flux2_multiple_angles(image_filename, angle_prompts, prepend="", append="",
     latent = g.node("EmptyFlux2LatentImage", width=size[0], height=size[1], batch_size=1)
     sched  = g.node("Flux2Scheduler", steps=steps, width=size[0], height=size[1])
     sample = g.node("KSamplerSelect", sampler_name="euler")
-    noise  = g.node("RandomNoise", noise_seed=int(time.time() * 1000) % (2**32))
+    noise_seed = int(seed) if seed is not None else int(time.time() * 1000) % (2**32)
+    noise  = g.node("RandomNoise", noise_seed=noise_seed)
     guider = g.node("CFGGuider", model=model, positive=pos_ref[0], negative=neg_ref[0], cfg=1.0)
     sampled= g.node("SamplerCustomAdvanced",
                     noise=noise[0], guider=guider[0], sampler=sample[0],

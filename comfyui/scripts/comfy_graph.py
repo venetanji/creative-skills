@@ -95,16 +95,22 @@ def _probe_frame_count(video_path: str) -> int:
     """Client-side ffprobe to get exact frame count of a video. Needed by
     the `continuation` workflow because GetImageRangeFromBatch doesn't
     support negative indexing — we must know total frames to compute
-    start_index for the last-N slice."""
+    start_index for the last-N slice. Pass --prev_frames to bypass when
+    ffprobe is unavailable in the sandbox."""
     if not video_path:
         raise ValueError("continuation requires --prev_video")
     import subprocess as _sp
-    # -count_packets is fast and accurate for h264 mp4s
-    r = _sp.run(["ffprobe", "-v", "error", "-count_packets",
-                 "-select_streams", "v:0",
-                 "-show_entries", "stream=nb_read_packets",
-                 "-of", "csv=p=0", video_path],
-                capture_output=True, text=True)
+    try:
+        # -count_packets is fast and accurate for h264 mp4s
+        r = _sp.run(["ffprobe", "-v", "error", "-count_packets",
+                     "-select_streams", "v:0",
+                     "-show_entries", "stream=nb_read_packets",
+                     "-of", "csv=p=0", video_path],
+                    capture_output=True, text=True)
+    except FileNotFoundError:
+        raise SystemExit(
+            "ffprobe not found on PATH. Install ffmpeg or pass "
+            "--prev_frames <N> to skip the probe.")
     try:
         return int(r.stdout.strip())
     except Exception:
@@ -220,7 +226,7 @@ HANDLERS = {
             "prompts", "front view\nside view\n3/4 view").splitlines() if p.strip()],
         prepend=opts.get("prepend", ""), append=opts.get("append", ""),
         filename_prefix=opts.get("prefix", "flux2_multiprompt"),
-        **_flux_extra(opts, include_steps=True)),
+        seed=seed, **_flux_extra(opts, include_steps=True)),
     "i2i2multi": lambda opts, seed, prompt: flux2.flux2_double_image_edit_multiprompt(
         image1_filename=upload_if_local(opts.get("image1", "")),
         image2_filename=upload_if_local(opts.get("image2", "")),
