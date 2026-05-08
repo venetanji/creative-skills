@@ -32,7 +32,7 @@ from ltx2 import (ltx2_text_to_video, ltx2_image_to_video, ltx2_image_audio_to_v
                    ltx2_first_last_frame_to_video, ltx2_multi_guide_to_video,
                    ltx2_continuation_to_video,
                    extract_last_frame)
-from tts import qwen_tts, qwen_voice_clone
+from tts import qwen_tts
 from post import extract_stems, transcribe, concat_videos
 import core
 
@@ -55,6 +55,11 @@ def _resolve_base_url(cmd: str) -> str:
             or "https://comfyui.tail9683c.ts.net").rstrip("/")
 
 BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
+
+# Set by main() when invoked with the `dump` prefix. Handlers that have
+# side effects (server uploads, /free calls) consult this and skip them
+# so `dump <cmd>` is a pure introspection — no network writes.
+DUMP_ONLY = False
 
 
 def _parse_args(args):
@@ -143,11 +148,12 @@ def _stt_free_models():
 
 def _h_stt(opts, seed, prompt):
     wf = post.transcribe(
-        audio_filename=upload_if_local(opts.get("audio", "")),
+        audio_filename=upload_if_local(opts.get("audio", "")) if not DUMP_ONLY else opts.get("audio", ""),
         model_size=opts.get("model_size", "large-v3-turbo"),
         language=opts.get("language", "auto"),
         filename_prefix=opts.get("prefix", "transcript"))
-    _stt_free_models()
+    if not DUMP_ONLY:
+        _stt_free_models()
     return wf
 
 
@@ -172,10 +178,11 @@ def _h_vconcat(opts, seed, prompt):
         # sees only our inputs (in numeric-prefixed order) and nothing else.
         import uuid as _uuid
         subfolder = f"concat_{_uuid.uuid4().hex[:8]}"
-        post.stage_clips_for_concat(video_list, subfolder=subfolder)
+        if not DUMP_ONLY:
+            post.stage_clips_for_concat(video_list, subfolder=subfolder)
         audio_name = None
         if opts.get("audio"):
-            audio_name = upload_if_local(opts["audio"])
+            audio_name = upload_if_local(opts["audio"]) if not DUMP_ONLY else opts["audio"]
         return post.concat_videos_ffmpeg(
             staged_subfolder=subfolder,
             audio_filename=audio_name,
@@ -417,13 +424,10 @@ def main():
     # Route to the right comfy server based on command class. Lets bots
     # call t2v / i2v / ia2v without knowing the URL; lets t2i / i2i stay
     # on the flux server.
-    global BASE
+    global BASE, DUMP_ONLY
     BASE = _resolve_base_url(cmd)
     core.BASE = BASE
-    # Some submodules also cache BASE at import time — sync them if present.
-    for mod in (flux2, ltx2, tts, post):
-        if hasattr(mod, "BASE"):
-            setattr(mod, "BASE", BASE)
+    DUMP_ONLY = dump_only
 
     output_dir  = Path(opts.get("output_dir", "outputs"))
     timeout     = int(opts.get("timeout", DEFAULT_TIMEOUTS.get(cmd, 600)))
