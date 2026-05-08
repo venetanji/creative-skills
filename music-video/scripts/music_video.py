@@ -584,7 +584,7 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
         elif len(ref_paths) == 2:
             anchor_type = "i2i2"
         else:
-            sys.exit(f"scene {idx}: anchor needs 0/1/2 references, got {len(ref_paths)}")
+            anchor_type = "i2iN"
 
     # Identity-preservation guard for i2i/i2i2 anchors: when we hand flux2 a
     # reference image of a person, auto-append a concrete instruction to
@@ -620,6 +620,12 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
         cmd = ["python3", str(COMFY), "i2i2",
                "--image1", str(ref_paths[0]),
                "--image2", str(ref_paths[1])] + common
+    elif anchor_type == "i2iN":
+        # 3+ references: comfy_graph.py i2iN takes a comma-separated list.
+        if not ref_paths:
+            sys.exit(f"scene {idx}: i2iN anchor needs at least one reference")
+        images_csv = ",".join(str(p) for p in ref_paths)
+        cmd = ["python3", str(COMFY), "i2iN", "--images", images_csv] + common
     elif anchor_type == "angles":
         # Generates a batch — uses the first prompt as the primary anchor.
         angle_prompts = anchor_cfg.get("angle_prompts") or [anchor_cfg["prompt"]]
