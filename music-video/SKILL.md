@@ -201,6 +201,10 @@ video:
   # lipsync_audio: song_lipsync.mp3    # optional — vocal-forward remix used for ia2v
   #                                      conditioning only. song.mp3 stays canonical
   #                                      for assembly. Hard-fails if set but missing.
+  #                                      Per-scene override: scene[].lipsync_audio
+  #                                      (use null to force song.mp3 on instrumental
+  #                                      / guitar-riff scenes where the vocal-forward
+  #                                      mix would mute the music dynamics).
 
 anchor_image: anchor.png                # first scene uses this; omit → t2v
 # anchor_prompt: "..."                  # optional — drives `anchors <spec>` for the
@@ -278,6 +282,19 @@ scenes:
       duration: 4.0
       b_sparse: "72,80,88,96"  # 4f — use INTO lipsync / singing scenes
       prompt: "…optional override for this boundary's morph…"
+```
+
+**Hard cut**: set `duration: 0` to skip the LTX transition for one
+boundary. The assemble step butt-cuts straight from prev scene's tail
+to this scene's head — useful on drum-hit / chorus-crash entries
+where you want the impact, not a smooth morph. Pair with a punchy
+visual change (palette flip, location jump) for maximum bite.
+
+```yaml
+scenes:
+  - label: chorus_crash
+    transition_from_prev:
+      duration: 0              # ← hard cut, no LTX transition rendered
 ```
 
 **Defaults that work:** 4s duration, 1s guide, `default_b_sparse: "96"` (1f).

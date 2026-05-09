@@ -835,15 +835,23 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     tail_buffer = float(vs.get("tail_buffer_sec", 0.0))
     effective_duration = float(scene["duration_sec"]) + (tail_buffer if is_lipsync else 0.0)
 
-    # video.lipsync_audio: optional path (relative to project) of an
-    # alternate audio source to use for ia2v conditioning — typically a
-    # vocal-forward remix that boosts vocals + backing vocals so LTX's
-    # audio head locks onto lyric content. Full-mix song.mp3 still wins
-    # at assembly time.
-    lipsync_audio_name = vs.get("lipsync_audio")
+    # Audio source resolution for ia2v conditioning. Priority:
+    #   1. scene.lipsync_audio (per-scene override; pass null/None to force
+    #      song.mp3 even when a global override is set — useful for
+    #      instrumental-driven scenes where the vocal-forward remix would
+    #      muddy the music dynamics).
+    #   2. video.lipsync_audio (project-wide vocal-forward remix; LTX's
+    #      audio head locks onto lyric content best when vocals + backing
+    #      vocals are boosted ~6dB over the instrumental bed).
+    #   3. song.mp3 (default; full mix).
+    # song.mp3 always wins at assembly so the final track is the original.
+    if "lipsync_audio" in scene:
+        lipsync_audio_name = scene["lipsync_audio"]
+    else:
+        lipsync_audio_name = vs.get("lipsync_audio")
     lipsync_src = (project / lipsync_audio_name).resolve() if lipsync_audio_name else None
     if lipsync_src and not lipsync_src.exists():
-        sys.exit(f"video.lipsync_audio points at {lipsync_src} which does not exist")
+        sys.exit(f"lipsync_audio for scene {idx} points at {lipsync_src} which does not exist")
     slice_mp3 = _slice_song(project, scene, stem,
                             tail_buffer_sec=tail_buffer if is_lipsync else 0.0,
                             source_path=lipsync_src)
