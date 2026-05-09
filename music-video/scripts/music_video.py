@@ -1160,6 +1160,19 @@ def cmd_transitions(spec: dict, project: Path) -> None:
                "--mask_start_sec", "1.0",
                "--mask_end_sec", "4.0",
                "--timeout", "1800"]
+        # Inherit fast/slow mode from the same knob the scene renders use.
+        # Without this transitions silently render full 2-pass (LTXVLatentUpsampler
+        # + 3-step refine) while scenes ran fast=true single-pass — they take
+        # 2× the wall time of a fast scene and the quality mismatch shows up
+        # as a visible sharpness pop at every transition.
+        # Per-boundary override: video.transitions.fast (true|false) trumps
+        # video.fast for transitions only — useful if you want fast scene
+        # iteration but final-quality morph clips, or vice versa.
+        trans_fast = tv.get("fast")
+        if trans_fast is None:
+            trans_fast = bool(vs.get("fast"))
+        if trans_fast:
+            cmd += ["--fast"]
         _log(project, f"transition {a_idx}→{b_idx}: {dur}s "
                       f"({guide_sec}s A-guide + {empty_end_sec - empty_start_sec}s empty + "
                       f"{guide_sec}s B-guide), audio from {slice_start:.2f}s")
