@@ -230,17 +230,41 @@ def _empty_audio_latent(g, length, fps, audio_vae):
                   batch_size=1, audio_vae=audio_vae[0])
 
 
-def _base_video_latent(g, width, height, length, vae, image_ref, strength=0.7):
+def _base_video_latent(g, width, height, length, vae, image_ref, strength=0.7,
+                        condition_only=False):
     """Empty video latent, optionally conditioned on a single reference image
-    (or a multi-frame IMAGE batch) via LTXVImgToVideoInplace. Lower strength
-    means the refs act as a soft identity prior instead of a locked first
-    frame — use ~0.4-0.6 for lipsync where the character should be free to
-    move, dance, and act rather than statically singing into the camera."""
+    (or a multi-frame IMAGE batch). Two anchor-conditioning modes:
+
+      condition_only=False  (default for plain ia2v):
+          LTXVImgToVideoInplace bakes the anchor INTO the initial latent state.
+          The sampler then refines from this partially-filled latent. Strong
+          first-frame fidelity but it COMPETES SPATIALLY with any downstream
+          LTXAddVideoICLoRAGuide conditioning — both want to drive the latent
+          and the IC-LoRA tends to win the left half / lose the right half,
+          producing a visible left-biased output. Don't use this with IC-LoRA.
+
+      condition_only=True   (use when LTXAddVideoICLoRAGuide is active):
+          LTXVImgToVideoConditionOnly attaches the anchor as a side-channel
+          condition WITHOUT modifying the latent. The latent stays empty
+          (full noise), and the conditioning chain (anchor + IC-LoRA video)
+          jointly drives generation through positive/negative pairs. This
+          matches the official Lightricks LTX-2.3 IC-LoRA Union-Control
+          workflow shape and produces full-frame coverage instead of the
+          left-half output we got with Inplace + IC-LoRA combined.
+
+    Lower strength means the refs act as a soft identity prior instead of a
+    locked first frame — use ~0.4-0.6 for lipsync where the character should
+    move freely.
+    """
     empty = g.node("EmptyLTXVLatentVideo",
                    width=int(width), height=int(height),
                    length=int(length), batch_size=1)
     if image_ref is None:
         return empty
+    if condition_only:
+        return g.node("LTXVImgToVideoConditionOnly",
+                       vae=vae, image=image_ref[0], latent=empty[0],
+                       strength=float(strength))
     bypass = g.node("PrimitiveBoolean", value=False)
     return g.node("LTXVImgToVideoInplace",
                   vae=vae, image=image_ref[0], latent=empty[0],
@@ -473,9 +497,13 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
     cond = _encode_prompts(g, clip[0], prompt, negative, fps)
 
     image_ref = image_ref_builder(g) if image_ref_builder else None
+    # When IC-LoRA is active, follow the official Lightricks workflow shape
+    # and use ConditionOnly anchor mode so the anchor doesn't bake into the
+    # latent state and fight the IC-LoRA conditioning for spatial coverage.
     video_latent = _base_video_latent(g, width, height, length,
                                       vae=checkpoint[2], image_ref=image_ref,
-                                      strength=base_guide_strength)
+                                      strength=base_guide_strength,
+                                      condition_only=ic_lora_active)
 
     # IC-LoRA reference image conditioning. Loads the reference, preps it
     # to a square tile via ImagePrepForICLora (the node centers + pads, no
@@ -494,47 +522,54 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                             str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
                             in ("mp4", "mov", "webm", "mkv"))
         if is_video_ref:
+            # Match the official Lightricks LTX-2.3 IC-LoRA Union-Control
+            # workflow: LoadVideo → GetVideoComponents[image] →
+            # ResizeImageMaskNode 'scale to multiple' (32) → LTXAddVideoICLoRAGuide.image.
+            # Skip ImagePrepForICLora entirely — that node distorts non-
+            # square inputs and was the root cause of the left-bias bug
+            # we chased through three iterations of size-tweaks.
+            # Caller is expected to render the conditioning video at
+            # exactly the output W×H dims (which are already ÷32-aligned),
+            # so the resize step is effectively a no-op but kept for
+            # safety against off-by-padding inputs.
             ic_load = g.node("LoadVideo", file=ic_lora_reference_filename)
-            # GetVideoComponents outputs (image, audio, fps); we want the
-            # image (frame batch) and let ImagePrepForICLora normalize size.
             ic_components = g.node("GetVideoComponents", video=ic_load[0])
-            ic_ref_image = ic_components[0]
+            ic_ref_prep = g.node("ResizeImageMaskNode", **{
+                "input": ic_components[0],
+                "resize_type": "scale to multiple",
+                "resize_type.multiple": 32,
+                "scale_method": "lanczos",
+            })
         else:
+            # Single-image reference (HDR-style static bias). Keep the
+            # ImagePrepForICLora path here — square-padded 1024×1024 input
+            # is what HDR was trained on, and the bias issue only manifests
+            # for video-batch conditioning under Union-Control.
             ic_load = g.node("LoadImage", image=ic_lora_reference_filename)
-            ic_ref_image = ic_load[0]
-        # IMPORTANT: prep dims must match the OUTPUT W×H, not a forced
-        # 1024×1024 square. The official Lightricks ICLoRA Union-Control
-        # workflow doesn't use ImagePrepForICLora at all in the video
-        # path — it resizes via ResizeImageMaskNode 'scale to multiple' so
-        # the conditioning frame matches the LTX latent grid 1:1. Forcing
-        # 1024×1024 was distorting non-square portrait inputs and biasing
-        # the active conditioning region to the left half of the canvas
-        # (visible bug: left side of output rendered, right side black
-        # because the conditioning fell into the left half of the 1024
-        # square after centering or alignment).
-        # ic_lora_reference_size of None (the new default) → use W×H;
-        # passing an int forces square (legacy behavior, only useful for
-        # single-image HDR style biases on square LoRAs).
-        if ic_lora_reference_size is None:
-            prep_w, prep_h = int(width), int(height)
-        else:
-            prep_w = prep_h = int(ic_lora_reference_size)
-        ic_ref_prep = g.node("ImagePrepForICLora",
-                              reference_image=ic_ref_image,
-                              output_width=prep_w,
-                              output_height=prep_h,
-                              border_width=0)
-        # latent_downscale_factor comes off the LTXICLoRALoaderModelOnly node
-        # we loaded above (slot 1). The remaining knobs (tile_size, etc.)
-        # are required even when use_tiled_encode is False — pass node-spec
-        # defaults to keep the workflow validation happy.
+            if ic_lora_reference_size is None:
+                prep_w, prep_h = int(width), int(height)
+            else:
+                prep_w = prep_h = int(ic_lora_reference_size)
+            ic_ref_prep = g.node("ImagePrepForICLora",
+                                  reference_image=ic_load[0],
+                                  output_width=prep_w,
+                                  output_height=prep_h,
+                                  border_width=0)
+        # latent_downscale_factor: the LoRA metadata exposes a value via
+        # LTXICLoRALoaderModelOnly[1] but the Union-Control LoRA's metadata
+        # value (2.0) produces a heavily LEFT-BIASED output where the
+        # rendered content collapses to the left half of the frame. The
+        # official Lightricks Union-Control workflow stores the widget as
+        # 1 — passing 1.0 here matches that and gives full-frame coverage.
+        # If you ever load a different IC-LoRA whose metadata value is the
+        # right one, plumb a flag to switch back to ic_loaded[1] (slot 1).
         ic_guide = g.node("LTXAddVideoICLoRAGuide",
                            positive=cond[0], negative=cond[1],
                            vae=checkpoint[2], latent=video_latent[0],
                            image=ic_ref_prep[0],
                            frame_idx=0,
                            strength=float(ic_lora_reference_strength),
-                           latent_downscale_factor=ic_loaded[1],
+                           latent_downscale_factor=1.0,
                            crop="disabled",
                            use_tiled_encode=False,
                            tile_size=256,
