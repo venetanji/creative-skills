@@ -969,14 +969,30 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
             ic_pairs.append(
                 f"{hdr_cfg['scene_emb']}:{float(hdr_cfg.get('scene_emb_strength', 1.0)):.2f}")
         ref = hdr_cfg.get("reference")
-        if not ref:
-            sys.exit("video.hdr_lora.reference is required when hdr_lora is set")
-        ref_path = (project / ref).resolve() if not Path(ref).is_absolute() else Path(ref)
-        if not ref_path.exists():
-            sys.exit(f"video.hdr_lora.reference points at {ref_path} which does not exist")
+        ref_video = hdr_cfg.get("reference_video")
+        # Static-image reference (HDR-style frame-0 bias): use --ic_lora_reference.
+        # Video reference (depth/canny/motion-track per-frame conditioning):
+        # use --ic_lora_reference_video. Pass either one. The video form
+        # bypasses ImagePrepForICLora server-side and uses ResizeImageMaskNode
+        # 'scale to multiple' instead — that's what the official Lightricks
+        # workflow does and it's what gives full-frame coverage on portrait
+        # outputs (vs the ImagePrepForICLora left-bias bug we hit on the
+        # square-prep path).
+        if not ref and not ref_video:
+            sys.exit("video.hdr_lora needs `reference` (image) OR `reference_video` (mp4)")
         common += ["--ic_loras", ",".join(ic_pairs),
-                   "--ic_lora_reference", str(ref_path),
-                   "--ic_lora_reference_strength", str(float(hdr_cfg.get("reference_strength", 1.0)))]
+                   "--ic_lora_reference_strength",
+                   str(float(hdr_cfg.get("reference_strength", 1.0)))]
+        if ref_video:
+            rv_path = (project / ref_video).resolve() if not Path(ref_video).is_absolute() else Path(ref_video)
+            if not rv_path.exists():
+                sys.exit(f"video.hdr_lora.reference_video points at {rv_path} which does not exist")
+            common += ["--ic_lora_reference_video", str(rv_path)]
+        else:
+            ref_path = (project / ref).resolve() if not Path(ref).is_absolute() else Path(ref)
+            if not ref_path.exists():
+                sys.exit(f"video.hdr_lora.reference points at {ref_path} which does not exist")
+            common += ["--ic_lora_reference", str(ref_path)]
 
     # guides: optional yaml list of additional keyframe guides at specified
     # positions within the shot. When present, route to `multiguide`
