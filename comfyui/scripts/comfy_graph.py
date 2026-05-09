@@ -321,7 +321,8 @@ HANDLERS = {
                   if opts.get("ic_lora_reference") else None)
         ),
         ic_lora_reference_strength=float(opts.get("ic_lora_reference_strength", 1.0)),
-        ic_lora_reference_size=int(opts.get("ic_lora_reference_size", 1024)),
+        ic_lora_reference_size=(int(opts["ic_lora_reference_size"])
+                                if opts.get("ic_lora_reference_size") else None),
         seed=seed),
     "continuation": lambda opts, seed, prompt: ltx2.ltx2_continuation_to_video(
         prev_video_filename=upload_if_local(opts.get("prev_video", "")),

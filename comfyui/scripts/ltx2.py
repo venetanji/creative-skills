@@ -434,7 +434,7 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
            ic_loras=None,
            ic_lora_reference_filename=None,
            ic_lora_reference_strength=1.0,
-           ic_lora_reference_size=1024,
+           ic_lora_reference_size=None,
            ckpt=CKPT, text_encoder=TEXT_ENCODER):
     """
     ic_loras: optional list of (lora_name, strength) tuples. Each is loaded
@@ -502,10 +502,27 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
         else:
             ic_load = g.node("LoadImage", image=ic_lora_reference_filename)
             ic_ref_image = ic_load[0]
+        # IMPORTANT: prep dims must match the OUTPUT W×H, not a forced
+        # 1024×1024 square. The official Lightricks ICLoRA Union-Control
+        # workflow doesn't use ImagePrepForICLora at all in the video
+        # path — it resizes via ResizeImageMaskNode 'scale to multiple' so
+        # the conditioning frame matches the LTX latent grid 1:1. Forcing
+        # 1024×1024 was distorting non-square portrait inputs and biasing
+        # the active conditioning region to the left half of the canvas
+        # (visible bug: left side of output rendered, right side black
+        # because the conditioning fell into the left half of the 1024
+        # square after centering or alignment).
+        # ic_lora_reference_size of None (the new default) → use W×H;
+        # passing an int forces square (legacy behavior, only useful for
+        # single-image HDR style biases on square LoRAs).
+        if ic_lora_reference_size is None:
+            prep_w, prep_h = int(width), int(height)
+        else:
+            prep_w = prep_h = int(ic_lora_reference_size)
         ic_ref_prep = g.node("ImagePrepForICLora",
                               reference_image=ic_ref_image,
-                              output_width=int(ic_lora_reference_size),
-                              output_height=int(ic_lora_reference_size),
+                              output_width=prep_w,
+                              output_height=prep_h,
                               border_width=0)
         # latent_downscale_factor comes off the LTXICLoRALoaderModelOnly node
         # we loaded above (slot 1). The remaining knobs (tile_size, etc.)
@@ -651,7 +668,7 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
                                ic_loras=None,
                                ic_lora_reference_filename=None,
                                ic_lora_reference_strength=1.0,
-                               ic_lora_reference_size=1024,
+                               ic_lora_reference_size=None,
                                checkpoint_name=None, text_encoder=None,
                                **_):
     """Image+Audio → Video.
