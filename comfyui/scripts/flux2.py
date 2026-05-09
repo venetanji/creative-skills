@@ -1,6 +1,7 @@
-"""Flux2 image generation workflows for ComfyUI at https://comfyui.tail9683c.ts.net
+"""Flux2 image generation workflows for ComfyUI (server URL via COMFY_URL,
+default http://localhost:8188).
 
-IMPORTANT: This server uses qwen_3_8b_fp8mixed as the CLIP model (NOT gemma).
+IMPORTANT: Flux2 uses qwen_3_8b_fp8mixed as the CLIP model (NOT gemma).
 The UNET must be flux-2-klein-9b-fp8.safetensors for full quality.
 
 Models available on this server:

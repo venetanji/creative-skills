@@ -1,17 +1,14 @@
 # ComfyUI API Reference
 
-The deployment has **two ComfyUI servers** behind the skill's CLI:
+`comfy_graph.py` reads `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` (per-class overrides)
+or `COMFY_URL` (single-server fallback). Default `http://localhost:8188` when
+no env var is set; set `http://localhost:8000` for ComfyUI Desktop.
 
-| Workload | Base URL | GPU |
-|---|---|---|
-| Flux/images, TTS, audio post | `https://comfyui.tail9683c.ts.net` | RTX 3080 Ti 12GB |
-| LTX-2.3 video | `https://comfyui-video.tail9683c.ts.net` | RTX 3090 24GB |
+A two-server deployment (separate Flux + LTX boxes for VRAM headroom) is
+fully supported — the CLI routes by command class so a caller doesn't have to
+track which server. A single-server install is the default.
 
-`comfy_graph.py` routes by command class; override per-class with
-`COMFY_URL_FLUX` / `COMFY_URL_VIDEO`, or force a single endpoint with
-`COMFY_URL`. Examples below assume the flux server.
-
-**Version:** 0.17.0 | PyTorch 2.10+cu130
+**Tested against:** ComfyUI 0.20.x | PyTorch 2.10+cu130
 
 ---
 
@@ -40,7 +37,7 @@ Add `&_=<timestamp>` to bypass caching.
 ### POST /upload/image — Upload reference image
 ```bash
 curl -X POST -F "image=@photo.jpg" -F "type=input" -F "subfolder=" \
-  https://comfyui.tail9683c.ts.net/upload/image
+  "$COMFY_URL/upload/image"
 ```
 
 ---

@@ -180,19 +180,18 @@ def _fill_scene_start_sec(spec: dict) -> None:
         cursor = float(s["start_sec"]) + float(s.get("duration_sec", 0))
 
 
-# Default workspace root used by `init`. Matches the canonical path
-# convention documented in /home/venetanji/CLAUDE.md — projects live at
-# /home/venetanji/.openclaw/workspace/<slug>/. Inside the sandbox the agent
-# When sandboxed, the agent's workspace is bind-mounted at `/workspace`,
-# so prefer that if it exists (writable). Otherwise fall back to the host
-# path. Overrideable via MV_WORKSPACE_ROOT env var for odd setups.
+# Default workspace root used by `init`. Resolution order:
+#   1. MV_WORKSPACE_ROOT env var (explicit override for odd setups).
+#   2. /workspace if present and writable (the OpenClaw sandbox convention —
+#      bind-mounted to the agent's workspace dir on the host).
+#   3. ~/.openclaw/workspace (host install fallback).
 def _default_workspace_root() -> Path:
     override = os.environ.get("MV_WORKSPACE_ROOT")
     if override:
         return Path(override).resolve()
     if os.path.isdir("/workspace") and os.access("/workspace", os.W_OK):
         return Path("/workspace")
-    return Path("/home/venetanji/.openclaw/workspace")
+    return Path.home() / ".openclaw" / "workspace"
 
 DEFAULT_WORKSPACE_ROOT = _default_workspace_root()
 
@@ -921,7 +920,7 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         # checkout sibling to this script (../../storyboard/lib/guides.py).
         sb_candidates = [
             Path("/home/sandbox/.openclaw/skills/storyboard/lib/guides.py"),
-            Path("/home/venetanji/.openclaw/skills/storyboard/lib/guides.py"),
+            Path.home() / ".openclaw/skills/storyboard/lib/guides.py",
             Path(__file__).resolve().parent.parent.parent / "storyboard/lib/guides.py",
         ]
         sb_lib = next((p for p in sb_candidates if p.exists()), sb_candidates[-1])
@@ -1242,7 +1241,7 @@ def cmd_assemble(spec: dict, project: Path) -> None:
     import importlib.util
     sb_candidates = [
         Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py"),
-        Path("/home/venetanji/.openclaw/skills/storyboard/lib/assemble.py"),
+        Path.home() / ".openclaw/skills/storyboard/lib/assemble.py",
         Path(__file__).resolve().parent.parent.parent / "storyboard/lib/assemble.py",
     ]
     sb_lib = next((p for p in sb_candidates if p.exists()), sb_candidates[-1])

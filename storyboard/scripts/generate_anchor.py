@@ -57,12 +57,14 @@ def _find_comfy_graph(cli_override: str | None) -> Path:
         if p.exists():
             return p
         sys.exit(f"--comfy-graph path not found: {cli_override}")
-    for candidate in (
-        "/home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py",
-        "/home/venetanji/.openclaw/skills/comfyui/scripts/comfy_graph.py",
-    ):
-        if Path(candidate).exists():
-            return Path(candidate)
+    candidates: list[Path] = [
+        Path("/home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py"),  # OpenClaw sandbox
+        Path.home() / ".openclaw/skills/comfyui/scripts/comfy_graph.py",        # host install
+        SCRIPT_DIR.parent.parent / "comfyui/scripts/comfy_graph.py",           # repo checkout sibling
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     sys.exit("could not locate comfy_graph.py — pass --comfy-graph <path>")
 
 

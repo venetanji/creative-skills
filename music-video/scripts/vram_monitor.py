@@ -45,7 +45,7 @@ def main() -> None:
     p.add_argument("--base",
                    default=(os.environ.get("COMFY_URL_VIDEO")
                             or os.environ.get("COMFY_URL")
-                            or "https://comfyui-video.tail9683c.ts.net"))
+                            or "http://localhost:8188"))
     p.add_argument("--interval", type=float, default=10.0)
     p.add_argument("--until-file", default=None)
     p.add_argument("--max-minutes", type=float, default=None)

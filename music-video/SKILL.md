@@ -142,21 +142,24 @@ scene authoring → `anchors` → gate 2 → `scenes` → `assemble`.
 
 ## Script paths (absolute; no `~`)
 
-- Sandbox (default): `/home/sandbox/.openclaw/skills/music-video/scripts/music_video.py`
-- Host (main/zeus): `/home/venetanji/.openclaw/skills/music-video/scripts/music_video.py`
+The canonical install path is `~/.openclaw/skills/music-video/scripts/music_video.py`.
+`~/.openclaw/…` works in an interactive shell but NOT always under `exec`, so
+when invoking from another agent or process pass an absolute path:
 
-The script uses a `uv run --script` shebang with inline deps (`pyyaml`, `imageio-ffmpeg`). `uv` is preinstalled in the sandbox at `/usr/local/bin/uv`.
+- OpenClaw sandbox: `/home/sandbox/.openclaw/skills/music-video/scripts/music_video.py`
+- Host install: `$HOME/.openclaw/skills/music-video/scripts/music_video.py`
+- Fresh clone: `<repo>/music-video/scripts/music_video.py`
 
-**Invoke it via `uv run --script`** so deps auto-install:
+The script uses a `uv run --script` shebang with inline deps (`pyyaml`,
+`imageio-ffmpeg`). **Invoke it via `uv run --script`** so deps auto-install:
 
 ```bash
-# Sandbox:
-uv run --script /home/sandbox/.openclaw/skills/music-video/scripts/music_video.py <cmd> ...
-# Host:
-uv run --script /home/venetanji/.openclaw/skills/music-video/scripts/music_video.py <cmd> ...
+uv run --script /path/to/music-video/scripts/music_video.py <cmd> ...
 ```
 
-Plain `python3 music_video.py …` will fail with `ModuleNotFoundError: yaml` unless you've already installed pyyaml in your env. Use `uv` instead — it's the designed path.
+Plain `python3 music_video.py …` will fail with `ModuleNotFoundError: yaml`
+unless you've already installed `pyyaml` in your env. Use `uv` instead — it's
+the designed path.
 
 ## Commands
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI for ComfyUI workflow submission at https://comfyui.tail9683c.ts.net
+"""CLI for ComfyUI workflow submission.
 
 Usage:
   python comfy_graph.py t2i   --prompt "a cat" [--notify-target discord:...]
@@ -17,7 +17,14 @@ Usage:
   python comfy_graph.py dump  t2i --prompt "a cat"   # print workflow JSON only
 
 Environment:
-  COMFY_URL          Base URL of ComfyUI server (default: https://comfyui.tail9683c.ts.net)
+  COMFY_URL          Base URL of ComfyUI server (default: http://localhost:8188).
+                     For ComfyUI Desktop the default port is 8000 — set
+                     COMFY_URL=http://localhost:8000 in that case.
+  COMFY_URL_FLUX     Override for image / TTS / audio commands. Falls back to
+                     COMFY_URL when unset.
+  COMFY_URL_VIDEO    Override for LTX video commands. Use this only when you
+                     run a separate LTX server on a different host/port; falls
+                     back to COMFY_URL.
   OPENCLAW_NOTIFY_TARGET  Default notification target (e.g. discord:123...)
 """
 from __future__ import annotations
@@ -48,13 +55,13 @@ def _resolve_base_url(cmd: str) -> str:
     if cmd in VIDEO_COMMANDS:
         return (os.environ.get("COMFY_URL_VIDEO")
                 or os.environ.get("COMFY_URL")
-                or "https://comfyui-video.tail9683c.ts.net").rstrip("/")
+                or "http://localhost:8188").rstrip("/")
     # default (images, tts, stems, stt): prefer COMFY_URL_FLUX, fall back to COMFY_URL
     return (os.environ.get("COMFY_URL_FLUX")
             or os.environ.get("COMFY_URL")
-            or "https://comfyui.tail9683c.ts.net").rstrip("/")
+            or "http://localhost:8188").rstrip("/")
 
-BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
+BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
 
 # Set by main() when invoked with the `dump` prefix. Handlers that have
 # side effects (server uploads, /free calls) consult this and skip them

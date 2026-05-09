@@ -1,4 +1,4 @@
-"""TTS workflows for ComfyUI at https://comfyui.tail9683c.ts.net"""
+"""TTS workflows for ComfyUI (server URL via COMFY_URL, default http://localhost:8188)."""
 from core import WorkflowGraph
 
 

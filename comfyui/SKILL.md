@@ -1,31 +1,38 @@
 ---
 name: comfyui
 description: >
-  Generate images and videos using ComfyUI workflows via direct REST API at
-  https://comfyui.tail9683c.ts.net. Use when asked to create images, edit photos,
-  generate videos, or run Flux/LTX2/Wan workflows. Triggers on: generate an image,
-  create a video, Flux2, ComfyUI, text-to-image, image-to-image, image-to-video,
-  scene generation, TTS, voice clone, workflow.
+  Generate images and videos using ComfyUI workflows via direct REST API. Use
+  when asked to create images, edit photos, generate videos, or run
+  Flux/LTX2/Wan workflows. Triggers on: generate an image, create a video,
+  Flux2, ComfyUI, text-to-image, image-to-image, image-to-video, scene
+  generation, TTS, voice clone, workflow.
 ---
 
 # ComfyUI Skill
 
 Direct ComfyUI REST API access for image and video generation.
 
-**ComfyUI servers (split by workload):**
-- **Flux/images, TTS, audio post:** `https://comfyui.tail9683c.ts.net` (RTX 3080 Ti 12GB)
-- **LTX video:** `https://comfyui-video.tail9683c.ts.net` (RTX 3090 24GB)
+## Server URL configuration
 
-`comfy_graph.py` auto-routes by command (image/audio/tts → flux server, video commands → video server). Override per-server via `COMFY_URL_FLUX` / `COMFY_URL_VIDEO`, or force a single endpoint with `COMFY_URL`.
+The scripts read three environment variables, in priority order:
+
+| Var | Used by | Falls back to |
+|---|---|---|
+| `COMFY_URL_FLUX`  | image / TTS / audio commands (`t2i`, `i2i`, `tts`, `stems`, `stt`, `vconcat`, `last_frame`) | `COMFY_URL` |
+| `COMFY_URL_VIDEO` | LTX video commands (`t2v`, `i2v`, `ia2v`, `flf2v`, `multiguide`, `transition`, `continuation`) | `COMFY_URL` |
+| `COMFY_URL`       | single-server fallback for everything | `http://localhost:8188` |
+
+**Defaults**: a fresh clone with no env vars set assumes a ComfyUI server at `http://localhost:8188` — the standard port when you start ComfyUI manually (`python main.py`) or via Docker.
+
+**ComfyUI Desktop**: the desktop app binds to `http://localhost:8000` instead. If you're using Desktop, set `COMFY_URL=http://localhost:8000` (or persist it in your shell rc).
+
+**Two-server topology** (e.g. separate Flux + LTX boxes for VRAM headroom): set both `COMFY_URL_FLUX` and `COMFY_URL_VIDEO`. The CLI auto-routes per command — agents don't have to track which server.
+
+**OpenClaw sandbox**: agents in an agentic-media sandbox have these vars injected at boot via the per-sandbox `credentials.env` propagation; agent prompts and skill code don't need to mention them.
 
 ## Script paths (use absolute; tilde expansion is unreliable under `exec`)
 
-| Where you're running | Path to use |
-|---|---|
-| Inside the sandbox (most agents) | `/home/sandbox/.openclaw/skills/comfyui/scripts/…` |
-| On the host (main, zeus) | `/home/venetanji/.openclaw/skills/comfyui/scripts/…` |
-
-`~/.openclaw/skills/…` works in an interactive shell but NOT always in the `exec` tool — use the absolute form so the first call succeeds.
+The canonical install location is `~/.openclaw/skills/comfyui/scripts/…`. In OpenClaw sandboxes that resolves to `/home/sandbox/.openclaw/skills/comfyui/scripts/…`; on a host install it depends on the user account that ran the install. `~/.openclaw/…` works in an interactive shell but NOT always under `exec` — pass an absolute path when invoking from another agent or process.
 
 ## LTX-2.3 Video Models (Required)
 
@@ -257,16 +264,16 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 - `--fast` *(any video command: t2v/i2v/ia2v/flf2v/continuation/multiguide/transition)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
 
 ### Environment variables
-- `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — separate endpoints for the flux (image/TTS/audio) and video servers. Pre-set in the sandbox env, so most agents can just run `comfy_graph.py t2i …` — the right server is picked automatically.
-- `COMFY_URL` — single-server fallback (used as default when the per-class env var is unset, and by `comfy_run.py` / `comfy_query.py` which talk to one server at a time). Default `https://comfyui.tail9683c.ts.net` (the flux server).
+- `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — separate endpoints for the flux (image/TTS/audio) and video servers when you run them on different hosts. In an OpenClaw sandbox these are pre-set via per-sandbox `credentials.env`, so agents can just run `comfy_graph.py t2i …` and the right server is picked automatically.
+- `COMFY_URL` — single-server fallback (used as default when the per-class env var is unset, and by `comfy_run.py` / `comfy_query.py` which talk to one server at a time). Default `http://localhost:8188`. Set `http://localhost:8000` for ComfyUI Desktop.
 - `OPENCLAW_NOTIFY_TARGET` — default notification target
 
 ### Discord attachments — `MEDIA:` directive in your reply
 
 Every successful comfy_graph call automatically copies the outputs to
 `/workspace/media/outbound/<filename>` (sandboxed agents) or
-`/home/venetanji/.openclaw/workspace/media/outbound/<filename>` (host). Those are
-the same file via the workspace bind mount.
+`~/.openclaw/workspace/media/outbound/<filename>` (host install). In an
+OpenClaw sandbox those are the same file via the workspace bind mount.
 
 To attach in a Discord reply, add a line **starting with `MEDIA:`** (only leading
 whitespace allowed before it) pointing at the **host-side** path — the reply parser
@@ -274,7 +281,7 @@ runs host-side and resolves literal paths only:
 
 ```
 Here's your image!
-MEDIA:/home/venetanji/.openclaw/workspace/media/outbound/flux2_t2i_00012_.png
+MEDIA:$HOME/.openclaw/workspace/media/outbound/flux2_t2i_00012_.png
 ```
 
 Inline forms (`"... image: MEDIA:/path ..."`) are NOT parsed. One `MEDIA:` line per
@@ -343,7 +350,7 @@ places them in the right spot.
 Your job after the exec returns:
 
 1. Parse the `saved: …` line from the output.
-2. Translate sandbox → host path: `/workspace/…` → `/home/venetanji/.openclaw/workspace-<agent>/…` (the `message` tool resolves paths on the host).
+2. Translate sandbox → host path: `/workspace/…` → `$HOME/.openclaw/workspace-<agent>/…` on the host (the `message` tool resolves paths on the host, so the host's literal absolute path is what `media:` wants).
 3. Send with the `message` tool's `media` arg.
 
 ```bash
@@ -359,7 +366,7 @@ message({
   action: "send",
   channel: "discord",
   to: "<channel_id>",
-  media: "/home/venetanji/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
+  media: "$HOME/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
   message: "Here's your image."
 })
 ```
@@ -374,7 +381,7 @@ Blocking exec is fine for **images (< 30s)** and **short TTS**. For **video** (L
 
 ```
 sessions_spawn({
-  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is /home/venetanji/.openclaw/workspace-<agent>/outputs/<file>.",
+  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is $HOME/.openclaw/workspace-<agent>/outputs/<file>.",
   runtime: "subagent",
   sandbox: "inherit",
   mode: "run"

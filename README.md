@@ -157,6 +157,24 @@ Or use the scripts directly — they all have shebangs (`#!/usr/bin/env python3`
 - **uv** for the PEP 723 scripts (`video_join.py`, `music_video.py`, `frame_check.py`, `vram_monitor.py`). `apt install uv` / `brew install uv` / `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - Standard Python 3.10+. No other host-level deps — uv pulls `pyyaml`, `imageio-ffmpeg`, `Pillow`, `numpy` into ephemeral envs on first run.
 
+### ComfyUI server URL
+
+The scripts read three env vars, in priority order:
+
+| Var | Used by | Falls back to |
+|---|---|---|
+| `COMFY_URL_FLUX`  | image / TTS / audio commands | `COMFY_URL` |
+| `COMFY_URL_VIDEO` | LTX video commands             | `COMFY_URL` |
+| `COMFY_URL`       | single-server fallback         | `http://localhost:8188` |
+
+A fresh clone with no env vars set assumes a ComfyUI server on `http://localhost:8188` — the default port when ComfyUI is started via `python main.py` or Docker.
+
+**ComfyUI Desktop** binds to `http://localhost:8000` instead of `8188`. If you're running the desktop app, set `COMFY_URL=http://localhost:8000` (or persist it in your shell rc).
+
+**Two-server topology** (separate Flux + LTX boxes for VRAM headroom): set both `COMFY_URL_FLUX` and `COMFY_URL_VIDEO`. `comfy_graph.py` routes by command class so a caller doesn't have to track which server.
+
+**OpenClaw sandbox**: agents in an OpenClaw sandbox have these env vars injected at boot via the per-sandbox `credentials.env` propagation, so agent prompts and skill code never need to mention them — `comfy_graph.py t2i …` just works.
+
 ## License
 
 MIT.
