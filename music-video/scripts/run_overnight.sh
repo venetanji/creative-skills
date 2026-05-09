@@ -6,7 +6,10 @@ proj="${1:?usage: run_overnight.sh <project_dir>}"
 proj="$(realpath "$proj")"
 cd "$proj"
 
-SKILL=/home/venetanji/.openclaw/skills/music-video/scripts
+# Resolve script bundle relative to this wrapper so the same script works
+# in any install location (host, OpenClaw sandbox, or a fresh clone).
+# Override SKILL to point elsewhere if you've installed scripts separately.
+SKILL="${SKILL:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 LOG="$proj/run_overnight.log"
 VRAM="$proj/vram.jsonl"
 

@@ -48,12 +48,24 @@ def _ffmpeg():
 # ── constants ─────────────────────────────────────────────────────────
 
 MAX_SHOT_DURATION = 15.0          # LTX-2.3 OOM threshold at portrait resolution
-COMFY = Path("/home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py")
-if not COMFY.exists():
-    COMFY = Path("/home/venetanji/.openclaw/skills/comfyui/scripts/comfy_graph.py")
-ELEVEN_SCENE = Path("/home/sandbox/.openclaw/skills/elevenlabs/scripts/eleven_scene_audio.py")
-if not ELEVEN_SCENE.exists():
-    ELEVEN_SCENE = Path("/home/venetanji/.openclaw/skills/elevenlabs/scripts/eleven_scene_audio.py")
+
+def _find_skill_script(rel: str) -> Path:
+    """Resolve a sibling-skill script across install locations.
+    Order: OpenClaw sandbox → host install (~/.openclaw) → repo checkout sibling.
+    """
+    candidates = [
+        Path(f"/home/sandbox/.openclaw/skills/{rel}"),
+        Path.home() / ".openclaw/skills" / rel,
+        Path(__file__).resolve().parent.parent.parent / rel.split("/", 1)[0] / rel.split("/", 1)[1],
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    # Last-resort default — caller will see ENOENT at first invocation.
+    return candidates[0]
+
+COMFY = _find_skill_script("comfyui/scripts/comfy_graph.py")
+ELEVEN_SCENE = _find_skill_script("elevenlabs/scripts/eleven_scene_audio.py")
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -541,9 +553,7 @@ def cmd_assemble(spec: dict, project: Path) -> None:
     # Delegate to the shared storyboard assemble helper — same pipeline
     # used by music-video. Pre-trim → strip audio → concat → mux.
     import importlib.util
-    sb_lib = Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py")
-    if not sb_lib.exists():
-        sb_lib = Path("/home/venetanji/.openclaw/skills/storyboard/lib/assemble.py")
+    sb_lib = _find_skill_script("storyboard/lib/assemble.py")
     m_spec = importlib.util.spec_from_file_location("storyboard_assemble", sb_lib)
     asm = importlib.util.module_from_spec(m_spec)
     m_spec.loader.exec_module(asm)

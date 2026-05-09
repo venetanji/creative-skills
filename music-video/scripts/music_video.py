@@ -180,19 +180,18 @@ def _fill_scene_start_sec(spec: dict) -> None:
         cursor = float(s["start_sec"]) + float(s.get("duration_sec", 0))
 
 
-# Default workspace root used by `init`. Matches the canonical path
-# convention documented in /home/venetanji/CLAUDE.md — projects live at
-# /home/venetanji/.openclaw/workspace/<slug>/. Inside the sandbox the agent
-# When sandboxed, the agent's workspace is bind-mounted at `/workspace`,
-# so prefer that if it exists (writable). Otherwise fall back to the host
-# path. Overrideable via MV_WORKSPACE_ROOT env var for odd setups.
+# Default workspace root used by `init`. Resolution order:
+#   1. MV_WORKSPACE_ROOT env var (explicit override for odd setups).
+#   2. /workspace if present and writable (the OpenClaw sandbox convention —
+#      bind-mounted to the agent's workspace dir on the host).
+#   3. ~/.openclaw/workspace (host install fallback).
 def _default_workspace_root() -> Path:
     override = os.environ.get("MV_WORKSPACE_ROOT")
     if override:
         return Path(override).resolve()
     if os.path.isdir("/workspace") and os.access("/workspace", os.W_OK):
         return Path("/workspace")
-    return Path("/home/venetanji/.openclaw/workspace")
+    return Path.home() / ".openclaw" / "workspace"
 
 DEFAULT_WORKSPACE_ROOT = _default_workspace_root()
 
@@ -374,11 +373,23 @@ def cmd_plan(spec: dict, project: Path) -> None:
         print(f"   LTX-2.3 can OOM past ~20s per scene at portrait resolutions. Split them.")
 
     print()
-    print(f"{'#':>3}  {'label':18}  {'start':>6}  {'dur':>5}  image  prompt")
+    print(f"{'#':>3}  {'label':18}  {'start':>6}  {'dur':>5}  {'src':10}  prompt")
     for i, s in enumerate(scenes, 1):
         flag = " !" if s["duration_sec"] > MAX_SCENE_DURATION else "  "
+        # src column reflects what will ACTUALLY be used as the ia2v starting
+        # frame: an `anchor:` block (with prompt) wins via flux2 pre-render
+        # over scene.image, which itself defaults to @last.
+        ac = s.get("anchor")
+        if ac and ac.get("prompt"):
+            t = ac.get("type")
+            if t is None:
+                refs = ac.get("references") or ([ac["reference"]] if ac.get("reference") else [])
+                t = ("t2i", "i2i", "i2i2", "i2iN")[min(len(refs), 3)]
+            src = f"flux2:{t}"
+        else:
+            src = s.get("image", "@last")
         print(f"{i:>3}  {s.get('label',''):18}  {s['start_sec']:>6.1f}  {s['duration_sec']:>5.1f}{flag}"
-              f"{s.get('image','@last'):8}  {s['prompt'][:60]}")
+              f"{src:10}  {s['prompt'][:60]}")
 
 
 def _next_variant_slot(project: Path) -> int:
@@ -515,26 +526,34 @@ def cmd_song(spec: dict, project: Path) -> None:
 
 
 def _slice_song(project: Path, scene: dict, stem: str,
-                tail_buffer_sec: float = 0.0) -> Path:
+                tail_buffer_sec: float = 0.0,
+                source_path: Path | None = None) -> Path:
     """Slice the song for LTX audio conditioning. tail_buffer_sec extends the
     slice past the scene's nominal end so LTX has audio lookhead to finish
     the phoneme / close the mouth — otherwise the mouth freezes mid-word at
     scene boundary. Extra tail is absorbed by crossfade=tail_buffer in
-    assembly so the timeline doesn't drift."""
+    assembly so the timeline doesn't drift.
+
+    source_path: optional override for the audio source (defaults to
+    project/song.mp3). Use this to feed LTX a vocal-forward remix
+    (vocals + backing vocals boosted) for cleaner lipsync conditioning,
+    while still keeping song.mp3 as the canonical full-mix track for
+    assembly. See video.lipsync_audio in the spec."""
     slice_mp3 = project / "song_slices" / f"{stem}.mp3"
     if slice_mp3.exists():
         return slice_mp3
     ffmpeg = FFMPEG()
+    src = source_path if source_path is not None else (project / "song.mp3")
     total = float(scene["duration_sec"]) + float(tail_buffer_sec)
     cmd = [ffmpeg, "-y", "-ss", str(scene["start_sec"]),
            "-t",  str(total),
-           "-i",  str(project / "song.mp3"),
+           "-i",  str(src),
            "-c",  "copy", str(slice_mp3)]
     rc = subprocess.run(cmd, capture_output=True).returncode
     if rc != 0:
         rc = subprocess.run([ffmpeg, "-y", "-ss", str(scene["start_sec"]),
                              "-t",  str(total),
-                             "-i",  str(project / "song.mp3"),
+                             "-i",  str(src),
                              "-c:a", "libmp3lame", "-b:a", "192k", str(slice_mp3)],
                             capture_output=True).returncode
         if rc != 0:
@@ -584,7 +603,7 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
         elif len(ref_paths) == 2:
             anchor_type = "i2i2"
         else:
-            sys.exit(f"scene {idx}: anchor needs 0/1/2 references, got {len(ref_paths)}")
+            anchor_type = "i2iN"
 
     # Identity-preservation guard for i2i/i2i2 anchors: when we hand flux2 a
     # reference image of a person, auto-append a concrete instruction to
@@ -620,6 +639,12 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
         cmd = ["python3", str(COMFY), "i2i2",
                "--image1", str(ref_paths[0]),
                "--image2", str(ref_paths[1])] + common
+    elif anchor_type == "i2iN":
+        # 3+ references: comfy_graph.py i2iN takes a comma-separated list.
+        if not ref_paths:
+            sys.exit(f"scene {idx}: i2iN anchor needs at least one reference")
+        images_csv = ",".join(str(p) for p in ref_paths)
+        cmd = ["python3", str(COMFY), "i2iN", "--images", images_csv] + common
     elif anchor_type == "angles":
         # Generates a batch — uses the first prompt as the primary anchor.
         angle_prompts = anchor_cfg.get("angle_prompts") or [anchor_cfg["prompt"]]
@@ -701,6 +726,9 @@ def cmd_anchors(spec: dict, project: Path) -> None:
                 sys.exit("top-level anchor generation failed")
             candidates = sorted(project.glob(f"{prefix}_*.png"),
                                 key=lambda p: p.name)
+            # When anchor_image points at a subdir (e.g. `scene_anchors/foo.png`)
+            # the destination parent must exist before rename.
+            anchor_path.parent.mkdir(parents=True, exist_ok=True)
             if not candidates:
                 # flux2 may also drop .png without the _NNNNN_ suffix depending
                 # on comfy settings; check bare name too.
@@ -818,8 +846,26 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     tail_buffer = float(vs.get("tail_buffer_sec", 0.0))
     effective_duration = float(scene["duration_sec"]) + (tail_buffer if is_lipsync else 0.0)
 
+    # Audio source resolution for ia2v conditioning. Priority:
+    #   1. scene.lipsync_audio (per-scene override; pass null/None to force
+    #      song.mp3 even when a global override is set — useful for
+    #      instrumental-driven scenes where the vocal-forward remix would
+    #      muddy the music dynamics).
+    #   2. video.lipsync_audio (project-wide vocal-forward remix; LTX's
+    #      audio head locks onto lyric content best when vocals + backing
+    #      vocals are boosted ~6dB over the instrumental bed).
+    #   3. song.mp3 (default; full mix).
+    # song.mp3 always wins at assembly so the final track is the original.
+    if "lipsync_audio" in scene:
+        lipsync_audio_name = scene["lipsync_audio"]
+    else:
+        lipsync_audio_name = vs.get("lipsync_audio")
+    lipsync_src = (project / lipsync_audio_name).resolve() if lipsync_audio_name else None
+    if lipsync_src and not lipsync_src.exists():
+        sys.exit(f"lipsync_audio for scene {idx} points at {lipsync_src} which does not exist")
     slice_mp3 = _slice_song(project, scene, stem,
-                            tail_buffer_sec=tail_buffer if is_lipsync else 0.0)
+                            tail_buffer_sec=tail_buffer if is_lipsync else 0.0,
+                            source_path=lipsync_src)
 
     # Prefer a scene-specific pre-generated anchor (flux2) when scene.anchor is set.
     # Falls back to the @last/@anchor/literal image chain otherwise.
@@ -869,9 +915,15 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         cmd = ["python3", str(COMFY), "t2v"] + common
     elif guides_yaml:
         import importlib.util
-        sb_lib = Path("/home/sandbox/.openclaw/skills/storyboard/lib/guides.py")
-        if not sb_lib.exists():
-            sb_lib = Path("/home/venetanji/.openclaw/skills/storyboard/lib/guides.py")
+        # Resolve storyboard/lib/guides.py from a sandbox install, the host
+        # venetanji install, or — when neither exists — from the repo
+        # checkout sibling to this script (../../storyboard/lib/guides.py).
+        sb_candidates = [
+            Path("/home/sandbox/.openclaw/skills/storyboard/lib/guides.py"),
+            Path.home() / ".openclaw/skills/storyboard/lib/guides.py",
+            Path(__file__).resolve().parent.parent.parent / "storyboard/lib/guides.py",
+        ]
+        sb_lib = next((p for p in sb_candidates if p.exists()), sb_candidates[-1])
         spec_gm = importlib.util.spec_from_file_location("storyboard_guides", sb_lib)
         gm = importlib.util.module_from_spec(spec_gm); spec_gm.loader.exec_module(gm)
 
@@ -908,6 +960,23 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
             prev_last = project / "scenes" / f"{_scene_stem(idx - 1, prev_label)}-last.png"
             if prev_last.exists():
                 ia2v_extras += ["--image-refs", str(prev_last)]
+        # ia2v guide strengths — control how strongly the anchor PNG locks
+        # the rendered scene's opening frames. ltx2.py's hardcoded defaults
+        # are base=0.5 / refine=0.3 (deliberately weak — model has motion
+        # freedom). For music-video work where the anchor was authored to
+        # define composition + lighting + character placement, those
+        # defaults throw the composition away: the singer's face survives
+        # but the corridor / stage / kitchen environment is reinvented
+        # from prompt. Default here to 0.9 / 0.7 so anchor PNGs actually
+        # drive the scene's first frame. Override via video.* (project)
+        # or scene[].* (per-scene). Drop to ~0.5 / 0.3 on action shots
+        # where motion freedom matters more than first-frame fidelity.
+        base_gs = scene.get("base_guide_strength",
+                            vs.get("base_guide_strength", 0.9))
+        refine_gs = scene.get("refine_guide_strength",
+                              vs.get("refine_guide_strength", 0.7))
+        ia2v_extras += ["--base_guide_strength", f"{float(base_gs):.2f}",
+                        "--refine_guide_strength", f"{float(refine_gs):.2f}"]
         cmd = ["python3", str(COMFY), "ia2v",
                "--image", image_path,
                "--audio", str(slice_mp3)] + ia2v_extras + common
@@ -1170,9 +1239,12 @@ def cmd_assemble(spec: dict, project: Path) -> None:
     # drama-video uses). Pre-trim → strip audio → concat → mux song.
     ffmpeg = FFMPEG()
     import importlib.util
-    sb_lib = Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py")
-    if not sb_lib.exists():
-        sb_lib = Path("/home/venetanji/.openclaw/skills/storyboard/lib/assemble.py")
+    sb_candidates = [
+        Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py"),
+        Path.home() / ".openclaw/skills/storyboard/lib/assemble.py",
+        Path(__file__).resolve().parent.parent.parent / "storyboard/lib/assemble.py",
+    ]
+    sb_lib = next((p for p in sb_candidates if p.exists()), sb_candidates[-1])
     m_spec = importlib.util.spec_from_file_location("storyboard_assemble", sb_lib)
     asm = importlib.util.module_from_spec(m_spec); m_spec.loader.exec_module(asm)
 

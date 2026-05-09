@@ -46,6 +46,30 @@ message({
 
 For instrumental tracks, pass `--instrumental` instead of `--lyrics`.
 
+## Importing an existing Suno song
+
+If the user gives you a Suno share URL (`https://suno.com/s/<share_id>`)
+instead of asking you to generate a new song, you don't need the MCP
+generate path at all. Resolve to the canonical share URL in a browser
+to read the song UUID, then pull the mp3 directly from Suno's CDN:
+
+```bash
+# Share URL → canonical URL → uuid (the canonical URL contains it):
+#   https://suno.com/s/34nlQuwqbiaJXzo1
+#   → https://suno.com/song/<uuid>?sh=<share_id>
+# The same `og:image` meta on the share page contains the uuid; you can
+# also use playwright-cli to grab `<meta property="og:image">` directly.
+
+UUID=5717194f-048e-4e92-8f4c-505a44ca3138
+curl -sS -o song.mp3 "https://cdn1.suno.ai/${UUID}.mp3"
+
+# Cover image (1200×630 og:image) is also public:
+curl -sS -o cover.jpeg "https://cdn2.suno.ai/image_large_${UUID}.jpeg"
+```
+
+After the pull, hand `song.mp3` to the music-video skill at step 5
+(STT → align scene timings) and skip steps 1-4 of that skill.
+
 ---
 
 ## Writing Lyrics

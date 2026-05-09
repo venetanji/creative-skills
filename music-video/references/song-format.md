@@ -10,6 +10,7 @@ Complete field list. All fields except `title`, `style`, and `scenes` are option
 | `style` | string | Producer-style text-to-music prompt (genre, BPM, instruments, production, vocal, mood, narrative sentence). Not a keyword list. See `~/.openclaw/skills/suno-mcp/references/style-guide.md` for the pattern. |
 | `lyrics` | string (multi-line) | With `[Verse]/[Chorus]/[Bridge]/[Instrumental]` tags. Omit or leave empty if `suno.make_instrumental: true`. |
 | `anchor_image` | path | First scene starts from this image. Relative paths resolve against the YAML's directory. If omitted and the first scene uses `@anchor`, the script falls back to t2v for scene 1. |
+| `anchor_prompt` | string | Used by `anchors <spec>` when rendering the top-level anchor PNG (the file at `anchor_image`). Lets you author the anchor in-spec instead of pre-rendering separately. Falls back to `title + style` when omitted. |
 | `video` | object | Per-project video defaults (see below). |
 | `suno` | object | Per-project suno flags (see below). |
 | `scenes` | list | Ordered scene list (see below). Minimum 1. |
@@ -22,6 +23,8 @@ Complete field list. All fields except `title`, `style`, and `scenes` are option
 | `resolution` | `[1024, 576]` | `[width, height]`. 768×512 is faster; 1280×720 is slower but sharper. |
 | `negative` | (none) | Negative prompt, applied to every scene. Good default: `"pc game, cartoon, modern tech, text, watermark, ugly, blurry"`. |
 | `tail_buffer_sec` | 0.0 | Extra seconds appended to lipsync scene renders; trimmed off at assemble. Gives LTX audio lookhead to close the phoneme. Only applied when the scene has an `anchor:` block. |
+| `lipsync_audio` | (none) | Path (relative to the project dir) to an alternate audio source used **only for ia2v conditioning** — typically a vocal-forward remix where vocals + backing vocals are boosted ~6dB over the instrumental stems. LTX-2.3's audio head locks onto vocal content cleanly when the lyrics sit above the bed; the full `song.mp3` stays canonical for assembly so the final track is the original mix. The orchestrator hard-fails if the path is set but missing, rather than silently falling back. |
+| `fast` | `false` | Global default for `scene[].fast`. When `true`, every scene skips the refine pass (half wall, half resolution) unless that scene sets `fast: false` explicitly. Use during scene authoring; flip back to `false` (or remove) for the final render. |
 | `transitions` | (off) | Sub-object — see below. Opt-in per-boundary LTX morph clips between adjacent scenes. |
 
 ### `video.transitions` (all optional; whole block optional)
@@ -55,7 +58,8 @@ Complete field list. All fields except `title`, `style`, and `scenes` are option
 | `fast` | no | Skip the refine pass. Half wall time, half resolution. Use for iteration. |
 | `anchor` | no | Sub-block for flux2 pre-render of this scene's anchor PNG. Keys: `type: t2i \| i2i \| i2i2 \| i2iN`, `prompt`, `reference`/`references`, `width`, `height`, `steps`. Without an `anchor` block, `@anchor` uses the top-level `anchor_image`. See `storyboard` skill for the anchor design pattern. |
 | `guides` | no | List of mid-scene keyframe guides. Each entry: `image` (literal path / `@anchor` / `@last`) + **one of** `at_sec` (float seconds) / `at_relative` (0..1 of shot duration) / `at_frame` (LTX latent frame, snapped to 8) + optional `strength` (default 1.0). When present, routes to LTX multiguide instead of plain ia2v. Use when the scene's first frame doesn't show the character, or to anchor identity through long shots (≥13s). |
-| `transition_from_prev` | no | Per-boundary override for the incoming edge. Keys: `duration` (float), `b_sparse` (string `"96"` / `"72,80,88,96"` or list of ints), `prompt` (string). Only applied when `video.transitions.enabled: true`. |
+| `lipsync_audio` | no | Per-scene override for the ia2v audio source. Path (relative to project) overrides `video.lipsync_audio`; explicit `null` forces this scene back to `song.mp3` even when the global override is set. Use the global vocal-forward remix on chorus / verse lipsync shots, then drop to `null` (= full mix) on guitar-riff explosions or instrumental scenes so LTX's audio head conditions on the music dynamics instead of the buried vocals. |
+| `transition_from_prev` | no | Per-boundary override for the incoming edge. Keys: `duration` (float — set to `0` for a **hard cut**, no LTX transition rendered, assemble butt-cuts straight from prev scene's tail to this scene's head), `b_sparse` (string `"96"` / `"72,80,88,96"` or list of ints), `prompt` (string). Only applied when `video.transitions.enabled: true`. |
 
 ## Timing
 

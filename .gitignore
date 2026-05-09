@@ -15,3 +15,4 @@ test_results.json
 !comfyui/references/*.png
 # uv ephemeral caches
 .uv_cache/
+.playwright-cli/

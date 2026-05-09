@@ -1,27 +1,38 @@
 ---
 name: comfyui
 description: >
-  Generate images and videos using ComfyUI workflows via direct REST API at
-  https://comfyui.tail9683c.ts.net. Use when asked to create images, edit photos,
-  generate videos, or run Flux/LTX2/Wan workflows. Triggers on: generate an image,
-  create a video, Flux2, ComfyUI, text-to-image, image-to-image, image-to-video,
-  scene generation, TTS, voice clone, workflow.
+  Generate images and videos using ComfyUI workflows via direct REST API. Use
+  when asked to create images, edit photos, generate videos, or run
+  Flux/LTX2/Wan workflows. Triggers on: generate an image, create a video,
+  Flux2, ComfyUI, text-to-image, image-to-image, image-to-video, scene
+  generation, TTS, voice clone, workflow.
 ---
 
 # ComfyUI Skill
 
 Direct ComfyUI REST API access for image and video generation.
 
-**ComfyUI:** https://comfyui.tail9683c.ts.net | **RTX 3090 24GB** | v0.16.1
+## Server URL configuration
+
+The scripts read three environment variables, in priority order:
+
+| Var | Used by | Falls back to |
+|---|---|---|
+| `COMFY_URL_FLUX`  | image / TTS / audio commands (`t2i`, `i2i`, `tts`, `stems`, `stt`, `vconcat`, `last_frame`) | `COMFY_URL` |
+| `COMFY_URL_VIDEO` | LTX video commands (`t2v`, `i2v`, `ia2v`, `flf2v`, `multiguide`, `transition`, `continuation`) | `COMFY_URL` |
+| `COMFY_URL`       | single-server fallback for everything | `http://localhost:8188` |
+
+**Defaults**: a fresh clone with no env vars set assumes a ComfyUI server at `http://localhost:8188` — the standard port when you start ComfyUI manually (`python main.py`) or via Docker.
+
+**ComfyUI Desktop**: the desktop app binds to `http://localhost:8000` instead. If you're using Desktop, set `COMFY_URL=http://localhost:8000` (or persist it in your shell rc).
+
+**Two-server topology** (e.g. separate Flux + LTX boxes for VRAM headroom): set both `COMFY_URL_FLUX` and `COMFY_URL_VIDEO`. The CLI auto-routes per command — agents don't have to track which server.
+
+**OpenClaw sandbox**: agents in an agentic-media sandbox have these vars injected at boot via the per-sandbox `credentials.env` propagation; agent prompts and skill code don't need to mention them.
 
 ## Script paths (use absolute; tilde expansion is unreliable under `exec`)
 
-| Where you're running | Path to use |
-|---|---|
-| Inside the sandbox (most agents) | `/home/sandbox/.openclaw/skills/comfyui/scripts/…` |
-| On the host (main, zeus) | `/home/venetanji/.openclaw/skills/comfyui/scripts/…` |
-
-`~/.openclaw/skills/…` works in an interactive shell but NOT always in the `exec` tool — use the absolute form so the first call succeeds.
+The canonical install location is `~/.openclaw/skills/comfyui/scripts/…`. In OpenClaw sandboxes that resolves to `/home/sandbox/.openclaw/skills/comfyui/scripts/…`; on a host install it depends on the user account that ran the install. `~/.openclaw/…` works in an interactive shell but NOT always under `exec` — pass an absolute path when invoking from another agent or process.
 
 ## LTX-2.3 Video Models (Required)
 
@@ -232,33 +243,37 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 | `i2iNmulti` | **Batch N prompts × N refs** → N outputs / 1 submission | `--images a,b,c`, `--prompts`, `--prepend`, `--append` |
 | `t2v` | Text-to-video (LTX-2.3, two-pass) | `--prompt`, `--seconds`, `--fps`, `--width`, `--height` |
 | `i2v` | Image-to-video (LTX-2.3, first-frame + refine) | `--image`, `--prompt`, `--seconds`, `--fps` |
-| `ia2v` | Image + audio to audio-reactive video | `--image`, `--audio`, `--prompt`, `--seconds`, `--fps` |
-| `flf2v` | First+last frame to video (LTX-2.3, single-pass) | `--first`, `--last`, `--prompt`, `--seconds`, `--fps`, `--guide-strength` |
+| `ia2v` | Image + audio to audio-reactive video | `--image`, `--audio`, `--prompt`, `--seconds`, `--fps`, `--image_refs a,b,c`, `--base_guide_strength 0.5`, `--refine_guide_strength 0.3`, `--identity_anchor`, `--identity_strength 0.3` |
+| `flf2v` | First+last frame to video (LTX-2.3, two-pass; default fps=25) | `--first`, `--last`, `--prompt`, `--seconds`, `--fps`, `--guide_strength`, `--use_transition_lora` |
+| `continuation` | Extend an existing video (LTX-2.3, two-pass) | `--prev_video`, `--prompt`, `--seconds`, `--audio`, `--overlap_seconds 1.0`, `--overlap_strength 1.0`, `--prev_frames N` (bypass ffprobe) |
+| `multiguide` | N image guides at N latent positions (LTX-2.3) | `--guides a.png,b.png,...`, `--frame_indices 0,96,168`, `--strengths 1.0,1.0,1.0`, `--audio`, `--no_transition_lora 1` (transition LoRA is **on by default** here) |
 | `transition` | Song-aligned morph between two clips (LTX-2.3) | `--prev_video`, `--next_video`, `--audio`, `--seconds`, `--mask_start_sec`, `--mask_end_sec`, `--use_addguide 1`, `--multiframe_guide 24`, `--multiframe_guide_last 1`, `--b_sparse_latent_positions "96"` or `"72,80,88,96"` |
-| `multiguide` | N image guides at N latent positions (LTX-2.3) | `--guides a.png,b.png,...`, `--frame_indices 0,96,168`, `--strengths 1.0,1.0,1.0`, `--audio`, `--no_transition_lora 1` (when not a transition) |
 | `tts` | Text-to-speech (Qwen3 TTS) | `--text`, `--prefix` |
+| `stems` | Vocals + instrumental split (MelBandRoFormer) | `--audio`, `--model`, `--prefix` |
+| `stt` | Whisper transcription → txt + word/segment SRTs | `--audio`, `--model_size large-v3-turbo`, `--language auto`, `--prefix` |
+| `vconcat` | Concatenate clips, optionally with audio | `--videos a.mp4,b.mp4,...`, `--audio`, `--fps 24`, `--trim_durations`, `--trim_starts`, `--fast` / `--no-fast` |
+| `last_frame` | Extract last frame from a **server-side** video path | `--video_path` (must be an absolute path on the ComfyUI server, not a local file) |
 | `run` | Submit any workflow JSON (file or stdin) | `--file workflow.json` or `cat wf.json \| ... run` |
-| `dump` | Print workflow JSON, no execution | workflow command + options |
-| `last_frame` | Extract last frame from video | `--video-path` |
+| `dump` | Print workflow JSON, no execution | prefix any workflow command (e.g. `dump t2i …`) |
 
 ### Global options
 - `--notify-target <target>` — OpenClaw notification target (e.g. `discord:1486985676066000957`)
 - `--output-dir <path>` — local output directory (default: `outputs/`)
 - `--timeout <seconds>` — generation timeout
 - `--seed <int>` — random seed for reproducibility
-- `--fast` *(video only: t2v/i2v/ia2v/flf2v)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
+- `--fast` *(any video command: t2v/i2v/ia2v/flf2v/continuation/multiguide/transition)* — skip the refine pass. About half the wall time, half the output resolution (no 2× upsample), rougher detail. Use for prompt iteration; leave off for final output.
 
 ### Environment variables
-- `COMFY_URL` — ComfyUI server URL (default: `https://comfyui.tail9683c.ts.net`)
-- `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — pre-set in the sandbox env so you don't need to prefix commands with `COMFY_URL=…`. Just run `comfy_graph.py t2i …` — sandbox already knows.
+- `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — separate endpoints for the flux (image/TTS/audio) and video servers when you run them on different hosts. In an OpenClaw sandbox these are pre-set via per-sandbox `credentials.env`, so agents can just run `comfy_graph.py t2i …` and the right server is picked automatically.
+- `COMFY_URL` — single-server fallback (used as default when the per-class env var is unset, and by `comfy_run.py` / `comfy_query.py` which talk to one server at a time). Default `http://localhost:8188`. Set `http://localhost:8000` for ComfyUI Desktop.
 - `OPENCLAW_NOTIFY_TARGET` — default notification target
 
 ### Discord attachments — `MEDIA:` directive in your reply
 
 Every successful comfy_graph call automatically copies the outputs to
 `/workspace/media/outbound/<filename>` (sandboxed agents) or
-`/home/venetanji/.openclaw/workspace/media/outbound/<filename>` (host). Those are
-the same file via the workspace bind mount.
+`~/.openclaw/workspace/media/outbound/<filename>` (host install). In an
+OpenClaw sandbox those are the same file via the workspace bind mount.
 
 To attach in a Discord reply, add a line **starting with `MEDIA:`** (only leading
 whitespace allowed before it) pointing at the **host-side** path — the reply parser
@@ -266,7 +281,7 @@ runs host-side and resolves literal paths only:
 
 ```
 Here's your image!
-MEDIA:/home/venetanji/.openclaw/workspace/media/outbound/flux2_t2i_00012_.png
+MEDIA:$HOME/.openclaw/workspace/media/outbound/flux2_t2i_00012_.png
 ```
 
 Inline forms (`"... image: MEDIA:/path ..."`) are NOT parsed. One `MEDIA:` line per
@@ -291,12 +306,12 @@ places them in the right spot.
 - **Upscaler (between passes):** `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` via `LatentUpscaleModelLoader`
 - **LoRA:** `ltx-2.3-22b-distilled-lora-384.safetensors` at **strength 0.6** — applied on ALL flows (t2v/i2v/ia2v/flf2v). This reproduces the distilled checkpoint behaviour on top of the dev-fp8 checkpoint we have installed; without it the 8-step schedule under-denoises and output is badly blurred.
 - **Pass 1 (coarse, 9 steps):** `euler_ancestral_cfg_pp` + ManualSigmas `"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"`, raw `LTXVConditioning`
-- **Between passes:** Separate AV → `LTXVLatentUpsampler` → re-apply image via `LTXVImgToVideoInplace(strength=1.0)` (i2v/ia2v only) → re-concat with audio → `LTXVCropGuides` on coarse video latent for conditioning
+- **Between passes:** Separate AV → `LTXVLatentUpsampler` → re-apply image via `LTXVImgToVideoInplace(strength=refine_guide_strength, default 0.3)` (i2v/ia2v only) → re-concat with audio → `LTXVCropGuides` on coarse video latent for conditioning. Historical `strength=1.0` hard-locked the opening frames and is no longer used.
 - **Pass 2 (refine, 4 steps):** `euler_cfg_pp` + ManualSigmas `"0.85, 0.7250, 0.4219, 0.0"`, cropped conditioning
 - **Always AV-concat:** All three variants (t2v/i2v/ia2v) use `LTXVConcatAVLatent`/`LTXVSeparateAVLatent`. For non-audio variants, `LTXVEmptyLatentAudio` provides a blank audio side. This keeps one graph shape.
 - **Length:** `(seconds × fps)` rounded to `≡ 1 (mod 8)`
 - **Audio for ia2v:** `LoadAudio` → `TrimAudioDuration` → `LTXVAudioVAEEncode` → `SetLatentNoiseMask` (with zero-valued `SolidMask`)
-- **flf2v (first-last frame):** adapted from the `Comfy-Org/workflow_templates` flf2v template into the same two-pass shape as the other flows. Pass-1 uses chained `LTXVAddGuide` (frame_idx=0 + frame_idx=-1 at strength 0.7) on the base latent; pass-2 re-injects both guides at strength 1.0 on the upsampled latent. Post-decode `LTXVCropGuides` strips the injected guide frames so the output doesn't show the raw input images as first/last frames (use `--fast` to keep the single-pass shape the template originally had).
+- **flf2v (first-last frame):** adapted from the `Comfy-Org/workflow_templates` flf2v template into the same two-pass shape as the other flows. Pass-1 uses chained `LTXVAddGuide` (frame_idx=0 + frame_idx=-1 at strength 0.7) on the base latent; pass-2 re-injects both guides at strength 1.0 on the upsampled latent. Post-decode `LTXVCropGuides` strips the injected guide frames so the output doesn't show the raw input images as first/last frames (use `--fast` to keep the single-pass shape the template originally had). Default `fps=25` here (every other video command defaults to 24); pass `--fps 24` for concat-friendly output. Transition LoRA is **off by default** (opt-in with `--use_transition_lora`) — the inverse convention from `multiguide`, where it is on by default and disabled via `--no_transition_lora 1`.
 - **multiguide (N-anchor):** chained `LTXVAddGuide` calls, one per guide, each
   at its specified latent `frame_idx` (snapped to 8 upstream). Used by
   music-video's `guides:` scene field to anchor identity mid-shot when the
@@ -335,7 +350,7 @@ places them in the right spot.
 Your job after the exec returns:
 
 1. Parse the `saved: …` line from the output.
-2. Translate sandbox → host path: `/workspace/…` → `/home/venetanji/.openclaw/workspace-<agent>/…` (the `message` tool resolves paths on the host).
+2. Translate sandbox → host path: `/workspace/…` → `$HOME/.openclaw/workspace-<agent>/…` on the host (the `message` tool resolves paths on the host, so the host's literal absolute path is what `media:` wants).
 3. Send with the `message` tool's `media` arg.
 
 ```bash
@@ -351,7 +366,7 @@ message({
   action: "send",
   channel: "discord",
   to: "<channel_id>",
-  media: "/home/venetanji/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
+  media: "$HOME/.openclaw/workspace-<agent>/outputs/flux2_t2i_XXXXX_.png",
   message: "Here's your image."
 })
 ```
@@ -366,7 +381,7 @@ Blocking exec is fine for **images (< 30s)** and **short TTS**. For **video** (L
 
 ```
 sessions_spawn({
-  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is /home/venetanji/.openclaw/workspace-<agent>/outputs/<file>.",
+  task: "Generate t2v of '<prompt>' (seconds=5) via /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_graph.py, then send the resulting video to discord channel <id> with caption '<caption>'. Use exec + message tools. Host path for message is $HOME/.openclaw/workspace-<agent>/outputs/<file>.",
   runtime: "subagent",
   sandbox: "inherit",
   mode: "run"
@@ -374,6 +389,28 @@ sessions_spawn({
 ```
 
 The subagent runs inside the same shared sandbox, does the long gen + delivery, and auto-announces completion to the main session when done. You (the main agent) are free to continue talking.
+
+## Recovery from client-side timeout
+
+`comfy_graph.py` polls `/history/<prompt_id>` every 2 seconds with a per-request 15s timeout. If the bridge or the server hiccups long enough for the polling deadline to expire — or if the comfy server restarts mid-render and wipes its history — the client raises `TimeoutError("Timed out after Ns")` even though the GPU may have finished the render and saved the file.
+
+Before re-running an expensive scene, check the server directly with `comfy_query.py`:
+
+```bash
+# Is anything running / queued?
+COMFY_URL=https://comfyui-bridge.tail74c072.ts.net:8189 \
+  python3 comfy_query.py queue
+
+# Did the prompt complete? (history is keyed by prompt_id, printed at start of run)
+COMFY_URL=… python3 comfy_query.py history <prompt_id>
+
+# Pull the file directly if the server still has it:
+curl -O "https://comfyui-bridge.tail74c072.ts.net:8189/view?filename=<name>&type=output"
+```
+
+Useful even when history is empty — the queue still tells you whether the GPU is running, idle, or has the job pending.
+
+If the server was restarted (history empty, queue empty, file not at `/view?filename=…&type=output`), the render genuinely needs to be re-run. Otherwise you can recover the asset for free.
 
 ## Troubleshooting
 

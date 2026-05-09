@@ -1,7 +1,14 @@
 # ComfyUI API Reference
 
-**Base URL:** `https://comfyui.tail9683c.ts.net`
-**Version:** 0.17.0 | GPU: RTX 3080 Ti 12GB | PyTorch 2.10+cu130
+`comfy_graph.py` reads `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` (per-class overrides)
+or `COMFY_URL` (single-server fallback). Default `http://localhost:8188` when
+no env var is set; set `http://localhost:8000` for ComfyUI Desktop.
+
+A two-server deployment (separate Flux + LTX boxes for VRAM headroom) is
+fully supported — the CLI routes by command class so a caller doesn't have to
+track which server. A single-server install is the default.
+
+**Tested against:** ComfyUI 0.20.x | PyTorch 2.10+cu130
 
 ---
 
@@ -30,7 +37,7 @@ Add `&_=<timestamp>` to bypass caching.
 ### POST /upload/image — Upload reference image
 ```bash
 curl -X POST -F "image=@photo.jpg" -F "type=input" -F "subfolder=" \
-  https://comfyui.tail9683c.ts.net/upload/image
+  "$COMFY_URL/upload/image"
 ```
 
 ---

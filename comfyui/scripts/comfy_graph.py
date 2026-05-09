@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI for ComfyUI workflow submission at https://comfyui.tail9683c.ts.net
+"""CLI for ComfyUI workflow submission.
 
 Usage:
   python comfy_graph.py t2i   --prompt "a cat" [--notify-target discord:...]
@@ -17,7 +17,14 @@ Usage:
   python comfy_graph.py dump  t2i --prompt "a cat"   # print workflow JSON only
 
 Environment:
-  COMFY_URL          Base URL of ComfyUI server (default: https://comfyui.tail9683c.ts.net)
+  COMFY_URL          Base URL of ComfyUI server (default: http://localhost:8188).
+                     For ComfyUI Desktop the default port is 8000 — set
+                     COMFY_URL=http://localhost:8000 in that case.
+  COMFY_URL_FLUX     Override for image / TTS / audio commands. Falls back to
+                     COMFY_URL when unset.
+  COMFY_URL_VIDEO    Override for LTX video commands. Use this only when you
+                     run a separate LTX server on a different host/port; falls
+                     back to COMFY_URL.
   OPENCLAW_NOTIFY_TARGET  Default notification target (e.g. discord:123...)
 """
 from __future__ import annotations
@@ -32,7 +39,7 @@ from ltx2 import (ltx2_text_to_video, ltx2_image_to_video, ltx2_image_audio_to_v
                    ltx2_first_last_frame_to_video, ltx2_multi_guide_to_video,
                    ltx2_continuation_to_video,
                    extract_last_frame)
-from tts import qwen_tts, qwen_voice_clone
+from tts import qwen_tts
 from post import extract_stems, transcribe, concat_videos
 import core
 
@@ -48,13 +55,18 @@ def _resolve_base_url(cmd: str) -> str:
     if cmd in VIDEO_COMMANDS:
         return (os.environ.get("COMFY_URL_VIDEO")
                 or os.environ.get("COMFY_URL")
-                or "https://comfyui-video.tail9683c.ts.net").rstrip("/")
+                or "http://localhost:8188").rstrip("/")
     # default (images, tts, stems, stt): prefer COMFY_URL_FLUX, fall back to COMFY_URL
     return (os.environ.get("COMFY_URL_FLUX")
             or os.environ.get("COMFY_URL")
-            or "https://comfyui.tail9683c.ts.net").rstrip("/")
+            or "http://localhost:8188").rstrip("/")
 
-BASE = os.environ.get("COMFY_URL", "https://comfyui.tail9683c.ts.net").rstrip("/")
+BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
+
+# Set by main() when invoked with the `dump` prefix. Handlers that have
+# side effects (server uploads, /free calls) consult this and skip them
+# so `dump <cmd>` is a pure introspection — no network writes.
+DUMP_ONLY = False
 
 
 def _parse_args(args):
@@ -95,16 +107,22 @@ def _probe_frame_count(video_path: str) -> int:
     """Client-side ffprobe to get exact frame count of a video. Needed by
     the `continuation` workflow because GetImageRangeFromBatch doesn't
     support negative indexing — we must know total frames to compute
-    start_index for the last-N slice."""
+    start_index for the last-N slice. Pass --prev_frames to bypass when
+    ffprobe is unavailable in the sandbox."""
     if not video_path:
         raise ValueError("continuation requires --prev_video")
     import subprocess as _sp
-    # -count_packets is fast and accurate for h264 mp4s
-    r = _sp.run(["ffprobe", "-v", "error", "-count_packets",
-                 "-select_streams", "v:0",
-                 "-show_entries", "stream=nb_read_packets",
-                 "-of", "csv=p=0", video_path],
-                capture_output=True, text=True)
+    try:
+        # -count_packets is fast and accurate for h264 mp4s
+        r = _sp.run(["ffprobe", "-v", "error", "-count_packets",
+                     "-select_streams", "v:0",
+                     "-show_entries", "stream=nb_read_packets",
+                     "-of", "csv=p=0", video_path],
+                    capture_output=True, text=True)
+    except FileNotFoundError:
+        raise SystemExit(
+            "ffprobe not found on PATH. Install ffmpeg or pass "
+            "--prev_frames <N> to skip the probe.")
     try:
         return int(r.stdout.strip())
     except Exception:
@@ -137,11 +155,12 @@ def _stt_free_models():
 
 def _h_stt(opts, seed, prompt):
     wf = post.transcribe(
-        audio_filename=upload_if_local(opts.get("audio", "")),
+        audio_filename=upload_if_local(opts.get("audio", "")) if not DUMP_ONLY else opts.get("audio", ""),
         model_size=opts.get("model_size", "large-v3-turbo"),
         language=opts.get("language", "auto"),
         filename_prefix=opts.get("prefix", "transcript"))
-    _stt_free_models()
+    if not DUMP_ONLY:
+        _stt_free_models()
     return wf
 
 
@@ -166,10 +185,11 @@ def _h_vconcat(opts, seed, prompt):
         # sees only our inputs (in numeric-prefixed order) and nothing else.
         import uuid as _uuid
         subfolder = f"concat_{_uuid.uuid4().hex[:8]}"
-        post.stage_clips_for_concat(video_list, subfolder=subfolder)
+        if not DUMP_ONLY:
+            post.stage_clips_for_concat(video_list, subfolder=subfolder)
         audio_name = None
         if opts.get("audio"):
-            audio_name = upload_if_local(opts["audio"])
+            audio_name = upload_if_local(opts["audio"]) if not DUMP_ONLY else opts["audio"]
         return post.concat_videos_ffmpeg(
             staged_subfolder=subfolder,
             audio_filename=audio_name,
@@ -220,7 +240,7 @@ HANDLERS = {
             "prompts", "front view\nside view\n3/4 view").splitlines() if p.strip()],
         prepend=opts.get("prepend", ""), append=opts.get("append", ""),
         filename_prefix=opts.get("prefix", "flux2_multiprompt"),
-        **_flux_extra(opts, include_steps=True)),
+        seed=seed, **_flux_extra(opts, include_steps=True)),
     "i2i2multi": lambda opts, seed, prompt: flux2.flux2_double_image_edit_multiprompt(
         image1_filename=upload_if_local(opts.get("image1", "")),
         image2_filename=upload_if_local(opts.get("image2", "")),
@@ -411,13 +431,10 @@ def main():
     # Route to the right comfy server based on command class. Lets bots
     # call t2v / i2v / ia2v without knowing the URL; lets t2i / i2i stay
     # on the flux server.
-    global BASE
+    global BASE, DUMP_ONLY
     BASE = _resolve_base_url(cmd)
     core.BASE = BASE
-    # Some submodules also cache BASE at import time — sync them if present.
-    for mod in (flux2, ltx2, tts, post):
-        if hasattr(mod, "BASE"):
-            setattr(mod, "BASE", BASE)
+    DUMP_ONLY = dump_only
 
     output_dir  = Path(opts.get("output_dir", "outputs"))
     timeout     = int(opts.get("timeout", DEFAULT_TIMEOUTS.get(cmd, 600)))

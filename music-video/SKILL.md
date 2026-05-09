@@ -45,26 +45,71 @@ downstream scene — don't skip the gates unless you're sure.
    pick the one you want, back up or delete `song.mp3`, then rename your
    chosen variant to `song.mp3`. Keep the others as `song_vN.mp3` — they
    become parallel `final_vN.mp4` renders during assembly.
-5. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
+5. **MANDATORY — transcribe the chosen song for word-level timestamps.**
+   You cannot eyeball scene `start_sec`/`duration_sec`. Whisper STT against
+   the actual audio is the source of truth. Run:
+
+   ```bash
+   # comfy_graph.py uploads the audio to ComfyUI's input dir, runs
+   # 'Apply Whisper' + 'Save SRT', and downloads three artefacts to the
+   # spec dir: <prefix>.txt (plain transcript), <prefix>_segments.srt
+   # (line-level cues), <prefix>_words.srt (per-word cues — use this for
+   # lipsync alignment).
+   comfy_graph.py stt --audio song.mp3 --prefix <slug> \
+     --output-dir <project-dir> --language English
+   ```
+
+   Use the segment SRT cues to set `start_sec`/`duration_sec` so each
+   scene starts on a vocal phrase boundary and ends just before the
+   next one. The orchestrator will slice the song audio per scene at
+   exactly these boundaries, so misalignment shows up as words cut in
+   half across scene cuts.
+
+   **If you have separated stems (e.g. from Suno's stem-export tool, or
+   `comfy_graph.py stems` on the full mix), transcribe the relevant stems
+   individually and merge.** Lead vocals, backing vocals, and the full
+   mix can each surface lines the others miss:
+   - Lead-vocal stem alone may drop hooks/answer-phrases that live only
+     in the backing-vocals layer (e.g. a refrain "Stable altitude"
+     answered only by the backing vocal).
+   - Whisper on the full mix can hallucinate text where backing-vocal
+     bleed sounds like a vocal phrase.
+   Run STT on each stem with a different `--prefix`, diff the segment
+   SRTs, and reconcile timing conflicts in favour of the cleanest stem
+   for each line. Don't trust a single pass.
+
+   **Defensive note:** if `stt` fails with HTTP 413, your ComfyUI server
+   (or the proxy in front of it) has a body-size limit on `/upload/image`
+   below your audio file's size. Either fix the proxy or re-encode the
+   audio for the STT pass only:
+   `ffmpeg -i song.mp3 -c:a libmp3lame -b:a 24k -ar 16000 -ac 1 song_stt.mp3`
+   — that re-encoded copy is fine for transcription but do NOT use it as
+   the ia2v audio source (LTX's audio VAE wants the full-quality input).
+
+6. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
    `duration_sec`, `prompt`, `image` (`@anchor | @last | path`). Optionally
    give a scene an `anchor:` block to pre-render a flux2 key frame for it.
-6. **`anchors <spec>`** — flux2 renders the top-level `anchor_image` (from
+   Lift `start_sec`/`duration_sec` straight from `<prefix>_segments.srt`
+   (step 5); each scene's span should land on a vocal-phrase boundary,
+   and total duration must equal the song length (probe with
+   `ffmpeg -i song.mp3` if unknown).
+7. **`anchors <spec>`** — flux2 renders the top-level `anchor_image` (from
    `anchor_prompt`, or fallback `title + style`) plus any per-scene anchors.
    Idempotent — skips files already on disk.
-7. **QUALITY GATE 2 — review the anchors.** Open every PNG under
+8. **QUALITY GATE 2 — review the anchors.** Open every PNG under
    `<project>/` and `<project>/scenes/`. If anything is wrong (wrong face,
    wrong mood, bad composition), DELETE that PNG and re-run `anchors <spec>`
    — tweak the scene's `anchor.prompt` or top-level `anchor_prompt` first.
    A bad base anchor propagates into every LTX scene that chains off it.
-8. **`scenes <spec>`** — renders every scene (LTX ia2v with the song slice +
+9. **`scenes <spec>`** — renders every scene (LTX ia2v with the song slice +
    resolved image). Restart-safe. Iterate one at a time with
    `scene N <spec>`.
-9. **`assemble <spec>`** — concat all scene MP4s, overlay the clean suno
-   audio → `final.mp4` (plus `final_vN.mp4` for each extra song variant).
+10. **`assemble <spec>`** — concat all scene MP4s, overlay the clean suno
+    audio → `final.mp4` (plus `final_vN.mp4` for each extra song variant).
 
 ### Running the whole thing
 
-`music_video.py all <spec>` runs steps 3→9 in order. It STOPS automatically
+`music_video.py all <spec>` runs steps 3→10 in order. It STOPS automatically
 at gates 1 and 2 (controlled by `gate_confirm_song` / `gate_confirm_anchors`
 in the YAML, default both true). To run fully unattended, either flip both
 flags to `false` in `song.yaml` or pass `--no-gate`:
@@ -97,21 +142,24 @@ scene authoring → `anchors` → gate 2 → `scenes` → `assemble`.
 
 ## Script paths (absolute; no `~`)
 
-- Sandbox (default): `/home/sandbox/.openclaw/skills/music-video/scripts/music_video.py`
-- Host (main/zeus): `/home/venetanji/.openclaw/skills/music-video/scripts/music_video.py`
+The canonical install path is `~/.openclaw/skills/music-video/scripts/music_video.py`.
+`~/.openclaw/…` works in an interactive shell but NOT always under `exec`, so
+when invoking from another agent or process pass an absolute path:
 
-The script uses a `uv run --script` shebang with inline deps (`pyyaml`, `imageio-ffmpeg`). `uv` is preinstalled in the sandbox at `/usr/local/bin/uv`.
+- OpenClaw sandbox: `/home/sandbox/.openclaw/skills/music-video/scripts/music_video.py`
+- Host install: `$HOME/.openclaw/skills/music-video/scripts/music_video.py`
+- Fresh clone: `<repo>/music-video/scripts/music_video.py`
 
-**Invoke it via `uv run --script`** so deps auto-install:
+The script uses a `uv run --script` shebang with inline deps (`pyyaml`,
+`imageio-ffmpeg`). **Invoke it via `uv run --script`** so deps auto-install:
 
 ```bash
-# Sandbox:
-uv run --script /home/sandbox/.openclaw/skills/music-video/scripts/music_video.py <cmd> ...
-# Host:
-uv run --script /home/venetanji/.openclaw/skills/music-video/scripts/music_video.py <cmd> ...
+uv run --script /path/to/music-video/scripts/music_video.py <cmd> ...
 ```
 
-Plain `python3 music_video.py …` will fail with `ModuleNotFoundError: yaml` unless you've already installed pyyaml in your env. Use `uv` instead — it's the designed path.
+Plain `python3 music_video.py …` will fail with `ModuleNotFoundError: yaml`
+unless you've already installed `pyyaml` in your env. Use `uv` instead — it's
+the designed path.
 
 ## Commands
 
@@ -152,8 +200,18 @@ video:
   negative: "pc game, cartoon, modern tech, text, ugly"
   crossfade: 0.5                      # optional; ffmpeg xfade between scenes
   camera_lora_strength: 0.8           # default applied per-scene if camera_lora is set
+  fast: true                          # optional global default for scene[].fast (iteration shortcut; flip off for final)
+  # lipsync_audio: song_lipsync.mp3    # optional — vocal-forward remix used for ia2v
+  #                                      conditioning only. song.mp3 stays canonical
+  #                                      for assembly. Hard-fails if set but missing.
+  #                                      Per-scene override: scene[].lipsync_audio
+  #                                      (use null to force song.mp3 on instrumental
+  #                                      / guitar-riff scenes where the vocal-forward
+  #                                      mix would mute the music dynamics).
 
 anchor_image: anchor.png                # first scene uses this; omit → t2v
+# anchor_prompt: "..."                  # optional — drives `anchors <spec>` for the
+#                                         top-level PNG. Falls back to title + style.
 
 scenes:
   - label: establishing
@@ -227,6 +285,19 @@ scenes:
       duration: 4.0
       b_sparse: "72,80,88,96"  # 4f — use INTO lipsync / singing scenes
       prompt: "…optional override for this boundary's morph…"
+```
+
+**Hard cut**: set `duration: 0` to skip the LTX transition for one
+boundary. The assemble step butt-cuts straight from prev scene's tail
+to this scene's head — useful on drum-hit / chorus-crash entries
+where you want the impact, not a smooth morph. Pair with a punchy
+visual change (palette flip, location jump) for maximum bite.
+
+```yaml
+scenes:
+  - label: chorus_crash
+    transition_from_prev:
+      duration: 0              # ← hard cut, no LTX transition rendered
 ```
 
 **Defaults that work:** 4s duration, 1s guide, `default_b_sparse: "96"` (1f).

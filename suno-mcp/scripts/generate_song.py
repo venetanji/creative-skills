@@ -224,7 +224,8 @@ if __name__ == "__main__":
     parser.add_argument("--tags", "-t", required=True, help="Genre/style tags")
     parser.add_argument("--title", "-T", required=True, help="Song title")
     parser.add_argument("--instrumental", "-i", action="store_true", help="Instrumental track")
-    parser.add_argument("--timeout", type=int, default=120, help="Timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=400,
+                        help="Total timeout in seconds (default 400 — full pipeline is 3-5 min)")
     
     args = parser.parse_args()
     

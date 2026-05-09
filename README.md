@@ -32,13 +32,22 @@ python3 scripts/comfy_graph.py multiprompt --image a.png --prompts "angle1\nangl
 python3 scripts/comfy_graph.py t2v   --prompt "..."  --seconds 10        # LTX-2.3 text-to-video
 python3 scripts/comfy_graph.py i2v   --image ref.png --prompt "..."      # LTX-2.3 image-to-video
 python3 scripts/comfy_graph.py ia2v  --image ref.png --audio a.mp3 ...   # LTX-2.3 audio-reactive video
-python3 scripts/comfy_graph.py flf2v --first a.png --last b.png ...      # LTX-2.3 first-last-frame
+python3 scripts/comfy_graph.py flf2v --first a.png --last b.png ...      # LTX-2.3 first-last-frame (default fps=25)
+python3 scripts/comfy_graph.py continuation  --prev_video prev.mp4 \
+        --prompt "..."  --seconds 8  --audio slice.mp3                   # LTX-2.3 extend an existing clip
 python3 scripts/comfy_graph.py multiguide  --guides a.png,b.png,c.png \
         --frame_indices 0,96,168  --strengths 1.0,1.0,1.0 ...            # LTX-2.3 N-anchor chain
 python3 scripts/comfy_graph.py transition  --prev_video a.mp4 \
         --next_video b.mp4  --audio slice.mp3 ...                        # LTX-2.3 song-aligned morph
 python3 scripts/comfy_graph.py tts   --text "..."                        # Qwen3 TTS
+python3 scripts/comfy_graph.py stems --audio song.mp3                    # vocals + instrumental split
+python3 scripts/comfy_graph.py stt   --audio vocals.flac                 # whisper transcript + SRTs
+python3 scripts/comfy_graph.py vconcat --videos a.mp4,b.mp4 --audio s.mp3  # multi-clip concat
+python3 scripts/comfy_graph.py last_frame --video_path /server/path/to/clip.mp4  # SERVER-SIDE path
+python3 scripts/comfy_graph.py dump  t2i --prompt "..."                  # print workflow JSON, no execute
 ```
+
+Add `dump` as a prefix to any workflow command for a side-effect-free preview of the workflow JSON. Useful for diffing against `object_info` to detect node-class drift after a ComfyUI upgrade.
 
 Flags shared across video commands: `--fps`, `--width`, `--height`, `--seconds`, `--seed`, `--negative`, `--camera-lora {static|dolly-{in,out,left,right}|jib-{up,down}}`, `--camera-lora-strength`, `--fast` (skip 2-pass refine).
 
@@ -117,6 +126,16 @@ An agent asks the user for a song concept → hand-writes a YAML (style brief, l
 
 The orchestrator invokes `suno-mcp/scripts/generate_song.py` for the song, `comfyui/scripts/comfy_graph.py {t2i,i2i,i2i2,multiprompt}` for per-scene anchor generation, and `comfyui/scripts/comfy_graph.py ia2v` for each scene's animated clip. Final assembly is ffmpeg (via `imageio-ffmpeg`) in the orchestrator itself. When one song generation produces multiple variants (suno always does), `assemble` emits one `final_vN.mp4` per variant against the same scene visuals.
 
+## Example projects
+
+Ready-made YAML inputs (one project per song) live in the companion repo
+[`venetanji/creative-scripts`](https://github.com/venetanji/creative-scripts).
+Pick one, copy it as `song.yaml` into a fresh project dir, supply the
+`anchor.png` the spec expects, and run `music_video.py all`. The current
+catalog includes folk noir, shoegaze, dreampop, and a 70s-disco lipsync
+pipeline (`glitter-down.yaml`) — see that repo's `README.md` for the
+full table.
+
 ## Install
 
 These are AgentSkill directories. Drop them wherever your runtime expects skills:
@@ -137,6 +156,24 @@ Or use the scripts directly — they all have shebangs (`#!/usr/bin/env python3`
 - **suno-mcp** reachable as an MCP server, invoked via `mcporter` configured in `~/.openclaw/config/mcporter.json`.
 - **uv** for the PEP 723 scripts (`video_join.py`, `music_video.py`, `frame_check.py`, `vram_monitor.py`). `apt install uv` / `brew install uv` / `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - Standard Python 3.10+. No other host-level deps — uv pulls `pyyaml`, `imageio-ffmpeg`, `Pillow`, `numpy` into ephemeral envs on first run.
+
+### ComfyUI server URL
+
+The scripts read three env vars, in priority order:
+
+| Var | Used by | Falls back to |
+|---|---|---|
+| `COMFY_URL_FLUX`  | image / TTS / audio commands | `COMFY_URL` |
+| `COMFY_URL_VIDEO` | LTX video commands             | `COMFY_URL` |
+| `COMFY_URL`       | single-server fallback         | `http://localhost:8188` |
+
+A fresh clone with no env vars set assumes a ComfyUI server on `http://localhost:8188` — the default port when ComfyUI is started via `python main.py` or Docker.
+
+**ComfyUI Desktop** binds to `http://localhost:8000` instead of `8188`. If you're running the desktop app, set `COMFY_URL=http://localhost:8000` (or persist it in your shell rc).
+
+**Two-server topology** (separate Flux + LTX boxes for VRAM headroom): set both `COMFY_URL_FLUX` and `COMFY_URL_VIDEO`. `comfy_graph.py` routes by command class so a caller doesn't have to track which server.
+
+**OpenClaw sandbox**: agents in an OpenClaw sandbox have these env vars injected at boot via the per-sandbox `credentials.env` propagation, so agent prompts and skill code never need to mention them — `comfy_graph.py t2i …` just works.
 
 ## License
 
