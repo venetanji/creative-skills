@@ -197,8 +197,14 @@ video:
   negative: "pc game, cartoon, modern tech, text, ugly"
   crossfade: 0.5                      # optional; ffmpeg xfade between scenes
   camera_lora_strength: 0.8           # default applied per-scene if camera_lora is set
+  fast: true                          # optional global default for scene[].fast (iteration shortcut; flip off for final)
+  # lipsync_audio: song_lipsync.mp3    # optional — vocal-forward remix used for ia2v
+  #                                      conditioning only. song.mp3 stays canonical
+  #                                      for assembly. Hard-fails if set but missing.
 
 anchor_image: anchor.png                # first scene uses this; omit → t2v
+# anchor_prompt: "..."                  # optional — drives `anchors <spec>` for the
+#                                         top-level PNG. Falls back to title + style.
 
 scenes:
   - label: establishing

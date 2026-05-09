@@ -49,9 +49,25 @@ video:
   negative: "pc game, cartoon, modern tech, text, watermark, ugly, blurry"
   crossfade: 0.5                  # ffmpeg xfade between scenes (hides hard cuts)
   camera_lora_strength: 0.8       # default strength if scene sets camera_lora
+  # fast: true                    # global default for scene[].fast — every scene
+  #                                 skips refine pass unless it sets fast: false.
+  #                                 Use during authoring; flip off for final.
+  # lipsync_audio: song_lipsync.mp3
+  #                               # optional — alt audio source for ia2v conditioning
+  #                                 only. Typically a vocal-forward remix where
+  #                                 vocals + backing vocals are +6dB over instrumental
+  #                                 stems, summed back into a single mp3. song.mp3
+  #                                 stays canonical for assembly. Hard-fails if set
+  #                                 but missing.
 
 # Optional — first scene starts from this image. If omitted, first scene uses t2v.
 anchor_image: anchor.png
+
+# Optional — prompt used by `anchors <spec>` to render the top-level anchor PNG.
+# Falls back to title + style when omitted.
+# anchor_prompt: >
+#   wide fog-shrouded fishing harbour at dawn, lonely rusted crane silhouette
+#   against muted grey sky, cool desaturated palette, photorealistic.
 
 # Optional — suno flags
 suno:
