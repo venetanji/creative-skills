@@ -374,11 +374,23 @@ def cmd_plan(spec: dict, project: Path) -> None:
         print(f"   LTX-2.3 can OOM past ~20s per scene at portrait resolutions. Split them.")
 
     print()
-    print(f"{'#':>3}  {'label':18}  {'start':>6}  {'dur':>5}  image  prompt")
+    print(f"{'#':>3}  {'label':18}  {'start':>6}  {'dur':>5}  {'src':10}  prompt")
     for i, s in enumerate(scenes, 1):
         flag = " !" if s["duration_sec"] > MAX_SCENE_DURATION else "  "
+        # src column reflects what will ACTUALLY be used as the ia2v starting
+        # frame: an `anchor:` block (with prompt) wins via flux2 pre-render
+        # over scene.image, which itself defaults to @last.
+        ac = s.get("anchor")
+        if ac and ac.get("prompt"):
+            t = ac.get("type")
+            if t is None:
+                refs = ac.get("references") or ([ac["reference"]] if ac.get("reference") else [])
+                t = ("t2i", "i2i", "i2i2", "i2iN")[min(len(refs), 3)]
+            src = f"flux2:{t}"
+        else:
+            src = s.get("image", "@last")
         print(f"{i:>3}  {s.get('label',''):18}  {s['start_sec']:>6.1f}  {s['duration_sec']:>5.1f}{flag}"
-              f"{s.get('image','@last'):8}  {s['prompt'][:60]}")
+              f"{src:10}  {s['prompt'][:60]}")
 
 
 def _next_variant_slot(project: Path) -> int:
