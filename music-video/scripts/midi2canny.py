@@ -6,6 +6,7 @@
 #   "numpy",
 #   "opencv-python-headless",
 #   "imageio-ffmpeg",
+#   "soundfile",
 # ]
 # ///
 """MIDI → canny-edge motion video. Python port of the operator's
@@ -60,6 +61,69 @@ import cv2
 import mido
 import numpy as np
 from imageio_ffmpeg import get_ffmpeg_exe
+
+# Optional: real audio waveform / RMS analysis. soundfile is the lighter
+# dep over librosa for raw .wav reads + per-window RMS — we only need
+# raw samples and amplitude envelopes, no pitch/onset detection on the
+# audio side (MIDI handles those).
+try:
+    import soundfile as sf
+    HAS_SOUNDFILE = True
+except ImportError:
+    HAS_SOUNDFILE = False
+
+
+class AudioStem:
+    """Loaded waveform of a single stem .wav. Provides cheap window-based
+    RMS lookup + downsampled waveform-for-display extraction. Used to
+    drive shape sizes (drums RMS → ring radius), bar heights (bass), and
+    real oscilloscope rendering (vocals).
+
+    `offset_sec` is added to every t_sec query — set this to the
+    --start-sec the spec is rendering FROM, so callers can pass
+    scene-relative time (e.g., state["time"] which starts at 0 each
+    render) and we'll look up the right slice of the full-song audio
+    file.
+    """
+    def __init__(self, wav_path: Path, offset_sec: float = 0.0):
+        if not HAS_SOUNDFILE:
+            raise RuntimeError("soundfile not available — install via PEP 723 deps")
+        self.audio, self.sr = sf.read(str(wav_path), dtype="float32",
+                                       always_2d=False)
+        if self.audio.ndim > 1:
+            self.audio = self.audio.mean(axis=1)  # downmix to mono
+        # Pre-compute global peak for normalization
+        peak = float(np.max(np.abs(self.audio))) or 1.0
+        self.peak = peak
+        self.offset_sec = float(offset_sec)
+
+    def rms(self, t_sec: float, window_sec: float = 0.05) -> float:
+        """Normalized 0..1 RMS over a window centered at t (scene-relative
+        if offset_sec was set, else absolute)."""
+        t = t_sec + self.offset_sec
+        half = window_sec / 2
+        a = max(0, int((t - half) * self.sr))
+        b = min(len(self.audio), int((t + half) * self.sr))
+        if b <= a:
+            return 0.0
+        chunk = self.audio[a:b]
+        return float(np.sqrt(np.mean(chunk * chunk))) / self.peak
+
+    def waveform(self, t_sec: float, dur_sec: float, n_samples: int) -> np.ndarray:
+        """Downsampled waveform for the [t, t+dur] window. Returns array of
+        length n_samples in range [-1, 1] (normalized by global peak)."""
+        t = t_sec + self.offset_sec
+        a = max(0, int(t * self.sr))
+        b = min(len(self.audio), int((t + dur_sec) * self.sr))
+        if b <= a:
+            return np.zeros(n_samples, dtype=np.float32)
+        chunk = self.audio[a:b] / self.peak
+        if len(chunk) == n_samples:
+            return chunk
+        # Resample by linear interp (preserves zero-crossings reasonably for
+        # display; not for audio playback)
+        idx = np.linspace(0, len(chunk) - 1, n_samples)
+        return np.interp(idx, np.arange(len(chunk)), chunk).astype(np.float32)
 
 
 # ──── stem registry (mirror of MV.TRACKS in engine.js) ───────────────────
@@ -208,16 +272,28 @@ class PolyField:
         pitchN = norm_pitch(note["midi"], rng)
         self.energy = min(1.0, self.energy + 0.3 + v * 0.5)
         self.rotV += (pitchN - 0.5) * 6 * (0.5 + v)
-        self.sidesBase = 5 + pitchN * 6
+        # Sides clamped to 3..7 so the polygons stay POLYGONAL —
+        # higher sides_max produced near-circles in the rendered output
+        # (operator feedback: "i could see the circular shape, that's not
+        # really polygons though"). Tri/quad/penta/hexa/septa is the
+        # visible-as-distinct-vertices range.
+        self.sidesBase = 3 + pitchN * 4
         self.scaleK = 0.7 + v * 0.6
-        self.countMod = int(pitchN * 6) - 3
+        # Polygon count modulation also reduced (was -3..+3 of base 14;
+        # now -2..+4 of base 8 default — fewer overlapping shapes makes
+        # individual polygons more readable).
+        self.countMod = int(pitchN * 6) - 2
 
     def render(self, canvas: np.ndarray, state: dict):
         dt = max(0.001, min(0.1, state["dt"]))
         # Decay rotV + energy
         self.rotV *= math.pow(0.6, dt)
         self.rot += self.rotV * dt
-        self.energy = max(0.15, self.energy * math.pow(0.4, dt))
+        # Energy floor raised 0.15 → 0.30 so the polygon underlay stays
+        # visible even when the conditioning has no guitar (per operator
+        # feedback "i don't see the friendly polygons as much"). The
+        # decay rate is unchanged.
+        self.energy = max(0.30, self.energy * math.pow(0.4, dt))
         # Smoothed volume from active notes (sum velocities)
         vol = 0.0
         n = 0
@@ -234,7 +310,11 @@ class PolyField:
         wSlow = math.sin(bar * tau / 4)
         wMed = math.sin(bar * tau / 2)
         wFast = math.sin(bar * tau)
-        sides = self.sidesBase + wSlow * 4 + wFast * 1.2
+        # Modulation amplitudes reduced to keep sides in the 3-8 range
+        # where polygon-ness reads visually. Was 4 + 1.2 → could push
+        # sides to 12+ which renders indistinguishable from a circle.
+        sides = max(3.0, min(8.0,
+                             self.sidesBase + wSlow * 1.5 + wFast * 0.6))
         baseScale = min(self.W, self.H) * 0.42 * self.scaleK
         scale = baseScale * (0.55 + 0.45 * wMed)
         target_count = max(3, round(self.count + self.countMod + self.volume * 10))
@@ -339,6 +419,29 @@ def _draw_particle(canvas, p, alpha: float, state: dict):
                 cv2.line(canvas, prev, (x, y), color, max(1, lw),
                          lineType=cv2.LINE_AA)
             prev = (x, y)
+    elif kind == "scope":
+        # Real oscilloscope of the loaded vocals audio. We display a window
+        # centered around the current frame time (state["time"]) covering
+        # ~80ms of audio. The waveform is sampled from the AudioStem and
+        # drawn as a polyline scaled vertically by the particle's amp +
+        # age-driven decay. n_samples = W//2 → one display pixel per 2
+        # actual columns, fast.
+        audio = p.get("audio")
+        if audio is None:
+            return
+        win = 0.10  # 100ms window — captures syllable structure
+        wave = audio.waveform(state["time"] - win / 2, win, n_samples=W // 2)
+        if wave is None or len(wave) == 0:
+            return
+        amp = p["amp"] * (1 - t * 0.5)
+        prev = None
+        for ix in range(len(wave)):
+            x = int(ix * 2)
+            y = int(p["y"] + wave[ix] * amp * 1.2)  # 1.2x boost for visibility
+            if prev is not None:
+                cv2.line(canvas, prev, (x, y), color, max(1, lw),
+                         lineType=cv2.LINE_AA)
+            prev = (x, y)
     elif kind == "hline":
         y = int(p["y"])
         cv2.line(canvas, (0, y), (W, y), color, max(1, lw), lineType=cv2.LINE_AA)
@@ -354,14 +457,30 @@ def _draw_particle(canvas, p, alpha: float, state: dict):
 def _spawn_drums(p_list, note, meta, state, W, H, shake_state):
     m = note["midi"]
     v = note["velocity"]
+    # If we have a loaded audio stem for drums, use the actual peak
+    # amplitude at this onset to scale the ring instead of just using
+    # MIDI velocity. The audio peak captures dynamics that MIDI velocity
+    # quantizes away (compressed kicks, ghost-note hi-hats, etc.) — this
+    # is what the operator meant by "circles modulated around the audio
+    # frequency of the assigned track".
+    audio = (meta or {}).get("audio")  # AudioStem or None
+    if audio is not None:
+        a_peak = audio.rms(note["time"], window_sec=0.08)
+        # Blend MIDI velocity (50%) with audio peak (50%) so quiet ghost
+        # hits stay smaller and loud kicks stay big. Both inputs are 0..1.
+        magnitude = 0.5 * v + 0.5 * min(1.0, a_peak * 4)
+    else:
+        magnitude = v
     if m <= 37:
-        # KICK → camera shake + big ring + bg flash
-        shake_state["shake"] = max(shake_state["shake"], v * 24)
-        shake_state["bgFlash"] = max(shake_state["bgFlash"], v * 0.5)
+        # KICK → camera shake + big ring + bg flash. Ring radius scales
+        # with magnitude (audio-aware when stem loaded).
+        shake_state["shake"] = max(shake_state["shake"], magnitude * 24)
+        shake_state["bgFlash"] = max(shake_state["bgFlash"], magnitude * 0.5)
         p_list.append({
             "kind": "ring", "x": W/2, "y": H/2, "r": 20,
-            "maxR": min(W, H) * 0.55, "life": 0.7, "age": 0,
-            "lw": 3 + v * 3,
+            "maxR": min(W, H) * (0.35 + 0.30 * magnitude),  # was fixed 0.55
+            "life": 0.7, "age": 0,
+            "lw": 3 + magnitude * 3,
         })
     elif m <= 41:
         # SNARE / CLAP → 2 horizontal slashes
@@ -401,8 +520,17 @@ def _spawn_bass(p_list, note, meta, state, W, H):
     dur = max(0.2, note["duration"])
     pitchN = norm_pitch(note["midi"], meta["range"])
     y = H - 30 - pitchN * (H * 0.5)
+    # Bass bar height — audio-aware modulation if audio stem loaded.
+    # We sample peak across the note's duration since bass notes
+    # sustain; a single-window RMS at note onset would miss the swell.
+    audio = (meta or {}).get("audio")
+    if audio is not None:
+        a_peak = audio.rms(note["time"] + dur / 2, window_sec=min(0.3, dur))
+        h_scale = 0.5 * v + 0.5 * min(1.0, a_peak * 5)
+    else:
+        h_scale = v
     p_list.append({
-        "kind": "bar", "y": y, "h": 20 + v * 40,
+        "kind": "bar", "y": y, "h": 20 + h_scale * 40,
         "life": dur, "age": 0, "lw": 2,
     })
 
@@ -424,11 +552,22 @@ def _spawn_synth(p_list, note, meta, state, W, H):
 def _spawn_vocals(p_list, note, meta, state, W, H):
     pitchN = norm_pitch(note["midi"], meta["range"])
     y = H * (0.85 - pitchN * 0.7)
+    # When a vocals audio stem is loaded, use REAL OSCILLOSCOPE rendering —
+    # the sample-domain waveform of the vocals, sliced per-frame in the
+    # particle's render loop. Falls back to synthetic sine wave for
+    # back-compat when no audio. This is what the operator meant by
+    # "the sinewave is actually a bit boring, could we use the real
+    # waveform — some kind of oscilloscope".
+    audio = (meta or {}).get("audio")
+    kind = "scope" if audio is not None else "wave"
     p_list.append({
-        "kind": "wave", "y": y, "amp": 20 + note["velocity"] * 60,
+        "kind": kind, "y": y,
+        "amp": 20 + note["velocity"] * 60,
         "freq": 2 + pitchN * 6,
         "phase": random.random() * math.pi * 2,
         "life": max(0.6, note["duration"]), "age": 0, "lw": 2,
+        "audio": audio,
+        "note_time": note["time"],
     })
 
 
@@ -472,7 +611,11 @@ def render(stems: dict, bpm: float, output: Path, *,
     shake_state = {"shake": 0.0, "bgFlash": 0.0}
 
     # Pre-resolve per-stem meta dicts that include range
-    meta = {sid: {"range": s["range"], "color": "#ffffff"} for sid, s in stems.items()}
+    # Pass through optional `audio` (AudioStem) so spawners can use real
+    # amplitude/waveform data instead of just MIDI velocity.
+    meta = {sid: {"range": s["range"], "color": "#ffffff",
+                  "audio": s.get("audio")}
+            for sid, s in stems.items()}
 
     # Frame writer
     n_frames = int(duration * fps)
@@ -580,10 +723,20 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--midi-dir", default=None,
                    help="directory holding per-stem .mid files (resolved by glob)")
+    p.add_argument("--audio-dir", default=None,
+                   help="directory holding per-stem .wav files (matched by stem "
+                        "name; enables real audio-amplitude modulation for drums "
+                        "and bass + real oscilloscope rendering for vocals). "
+                        "Defaults to --midi-dir if a .wav exists alongside .mid.")
     # Per-stem explicit overrides
     for sid in TRACK_GLOBS:
         p.add_argument(f"--{sid}", default=None,
                        help=f"explicit path to {sid}.mid (overrides --midi-dir glob)")
+        p.add_argument(f"--{sid}-wav", default=None,
+                       help=f"explicit path to {sid}.wav for audio-aware "
+                            f"modulation (replaces synthetic sine waves with "
+                            f"real waveform on vocals, scales drum ring "
+                            f"radius by audio peak, etc).")
     p.add_argument("--output", default="midi2canny.mp4")
     p.add_argument("--duration", type=float, default=None,
                    help="seconds (default = max-end of any stem, capped at 30s)")
@@ -631,6 +784,32 @@ def main():
         print(f"  loaded {sid}: {path.name}  "
               f"{len(notes)} notes, range {rng['min']}-{rng['max']}, "
               f"{end:.2f}s", file=sys.stderr)
+
+        # Resolve matching audio stem if available. Order:
+        #   1. explicit --<sid>-wav flag
+        #   2. --audio-dir/<basename of midi>.wav
+        #   3. <midi sibling>/<midi name>.wav
+        # (None of those force-fail; audio-aware modulation just won't
+        # apply when no .wav is found.)
+        if not HAS_SOUNDFILE:
+            continue
+        wav_explicit = getattr(args, f"{sid}_wav", None)
+        wav_path = None
+        if wav_explicit:
+            wav_path = Path(wav_explicit).resolve()
+        else:
+            audio_dir = Path(args.audio_dir).resolve() if args.audio_dir else path.parent
+            cand = audio_dir / (path.stem + ".wav")
+            if cand.exists():
+                wav_path = cand
+        if wav_path and wav_path.exists():
+            try:
+                stems[sid]["audio"] = AudioStem(wav_path,
+                                                  offset_sec=args.start_sec)
+                print(f"    + audio: {wav_path.name}  ({len(stems[sid]['audio'].audio) / stems[sid]['audio'].sr:.1f}s)",
+                      file=sys.stderr)
+            except Exception as e:
+                print(f"    audio load failed for {wav_path}: {e}", file=sys.stderr)
 
     if not stems:
         sys.exit("no MIDI tracks loaded — pass --midi-dir or per-stem flags")
