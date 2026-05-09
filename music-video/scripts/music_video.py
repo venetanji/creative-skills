@@ -789,8 +789,22 @@ def cmd_anchors(spec: dict, project: Path) -> None:
 
 
 def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str | None:
-    """Resolve `image: @none | @anchor | @last | path`. Returns absolute path
-    string, or None if @none (force t2v), or @last at idx=1 with no anchor → t2v."""
+    """Resolve image-token references → absolute path string (or None for t2v).
+    Token vocabulary:
+      @none           → no image conditioning (forces t2v)
+      @last           → previous scene's last frame (chained continuity)
+      @anchor         → top-level spec.anchor_image
+      @scene_anchor   → THIS scene's flux2-rendered anchor PNG. Use this in
+                        guides[].image when you want a multi-guide shot to
+                        bias toward the scene's own composition (smudged
+                        eyeliner, jacket, lighting) rather than the raw
+                        character sheet anchors/narrator.png. Without this,
+                        the model sees only the character's STUDIO portrait
+                        + the establishing corridor and falls back to a
+                        clean studio aesthetic that ignores the scene's
+                        per-shot styling.
+      <path>          → literal relative-to-project or absolute path
+    Returns None for @none, or for @last at idx=1 with no anchor_image."""
     if ref == "@none":
         return None  # explicit t2v — no image conditioning, no audio slice
     if not ref or ref == "@last":
@@ -811,6 +825,14 @@ def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str 
         if not anchor:
             sys.exit(f"scene {idx}: @anchor requested but spec.anchor_image missing")
         return str((project / anchor).resolve())
+    if ref == "@scene_anchor":
+        scene = spec["scenes"][idx - 1]
+        stem = _scene_stem(idx, scene.get("label", "scene"))
+        scene_anchor = project / "scenes" / f"{stem}-anchor.png"
+        if not scene_anchor.exists():
+            sys.exit(f"scene {idx}: @scene_anchor requested but {scene_anchor} "
+                     f"does not exist (run anchors phase first)")
+        return str(scene_anchor)
     # Literal path (relative to project dir if not absolute)
     p = Path(ref)
     return str(p if p.is_absolute() else (project / p).resolve())
