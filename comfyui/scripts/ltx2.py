@@ -485,10 +485,25 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
     # bias (HDR envelope, lighting palette); use frame_idx=-1 or middle
     # for late-shot biases. Returns (positive, negative, latent).
     if ic_lora_active:
-        ic_ref_load = g.node("LoadImage",
-                              image=ic_lora_reference_filename)
+        # Reference can be a single image (LoadImage) or a video frame batch
+        # (LoadVideo → GetVideoComponents). The video path is what makes
+        # depth-control / canny-control / motion-track-control IC-LoRAs
+        # actually conditioning-per-frame instead of a static bias —
+        # use ic_lora_reference_filename ending in .mp4/.mov to trigger.
+        is_video_ref = bool(ic_lora_reference_filename and
+                            str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
+                            in ("mp4", "mov", "webm", "mkv"))
+        if is_video_ref:
+            ic_load = g.node("LoadVideo", file=ic_lora_reference_filename)
+            # GetVideoComponents outputs (image, audio, fps); we want the
+            # image (frame batch) and let ImagePrepForICLora normalize size.
+            ic_components = g.node("GetVideoComponents", video=ic_load[0])
+            ic_ref_image = ic_components[0]
+        else:
+            ic_load = g.node("LoadImage", image=ic_lora_reference_filename)
+            ic_ref_image = ic_load[0]
         ic_ref_prep = g.node("ImagePrepForICLora",
-                              reference_image=ic_ref_load[0],
+                              reference_image=ic_ref_image,
                               output_width=int(ic_lora_reference_size),
                               output_height=int(ic_lora_reference_size),
                               border_width=0)

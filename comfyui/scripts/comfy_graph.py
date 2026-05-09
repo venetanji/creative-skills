@@ -309,8 +309,17 @@ HANDLERS = {
             (parts[0].strip(), float(parts[1]) if len(parts) > 1 else 1.0)
             for parts in (s.split(":") for s in opts.get("ic_loras", "").split(",") if s.strip())
         ] or None,
-        ic_lora_reference_filename=upload_if_local(opts.get("ic_lora_reference", ""))
-            if opts.get("ic_lora_reference") else None,
+        # --ic_lora_reference (image file) and --ic_lora_reference_video (mp4)
+        # both flow through the same ic_lora_reference_filename param —
+        # ltx2._build detects the file extension and chooses LoadImage vs
+        # LoadVideo+GetVideoComponents accordingly. Pass either, not both;
+        # the video flag wins if both are set.
+        ic_lora_reference_filename=(
+            upload_if_local(opts["ic_lora_reference_video"])
+            if opts.get("ic_lora_reference_video")
+            else (upload_if_local(opts.get("ic_lora_reference", ""))
+                  if opts.get("ic_lora_reference") else None)
+        ),
         ic_lora_reference_strength=float(opts.get("ic_lora_reference_strength", 1.0)),
         ic_lora_reference_size=int(opts.get("ic_lora_reference_size", 1024)),
         seed=seed),
