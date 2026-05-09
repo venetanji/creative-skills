@@ -37,16 +37,25 @@ def resolve_guides(guides_spec, *,
                     fps: int,
                     total_frames: int | None = None,
                     project_dir: Path | str | None = None,
-                    token_resolver=None):
+                    token_resolver=None,
+                    scene_start_sec: float = 0.0):
     """Resolve a list of guide dicts into normalized tuples.
 
     Args:
         guides_spec: list of dicts. Each dict must have:
             - `image`: path string. May be "@anchor" / "@last" / literal.
-            - Exactly ONE of `at_sec` (float), `at_relative` (0..1 float),
-              or `at_frame` (int). Absolute latent-frame wins if multiple.
+            - Exactly ONE of `at_sec` (float, scene-relative seconds),
+              `at_relative` (0..1 float of shot duration),
+              `at_frame` (int, explicit LTX latent frame), or
+              `at_song_sec` (float, ABSOLUTE song time in seconds —
+              auto-resolves to scene-relative as
+              `at_song_sec - scene_start_sec`). Absolute latent-frame wins
+              if multiple are given.
             - Optional `strength` (float, default 1.0).
             - Optional `label` (str, ignored; useful for human-reading yaml).
+        scene_start_sec: when guide specs use `at_song_sec`, subtract this
+            to compute the scene-relative offset. Defaults to 0.0 — leave
+            unset when guides are written in scene-relative time.
         duration_sec: shot duration (seconds). Sets the default
             total_frames when unspecified.
         fps: integer frames per second.
@@ -85,13 +94,21 @@ def resolve_guides(guides_spec, *,
 
         if "at_frame" in g:
             raw_frame = int(g["at_frame"])
+        elif "at_song_sec" in g:
+            scene_rel = float(g["at_song_sec"]) - float(scene_start_sec)
+            if scene_rel < 0:
+                raise ValueError(
+                    f"at_song_sec {g['at_song_sec']} is before scene start "
+                    f"{scene_start_sec}: {g}")
+            raw_frame = int(round(scene_rel * float(fps)))
         elif "at_sec" in g:
             raw_frame = int(round(float(g["at_sec"]) * float(fps)))
         elif "at_relative" in g:
             raw_frame = int(round(float(g["at_relative"]) * float(total_frames)))
         else:
             raise ValueError(
-                f"guide spec needs one of at_sec / at_relative / at_frame: {g}")
+                f"guide spec needs one of at_sec / at_relative / at_frame / "
+                f"at_song_sec: {g}")
 
         frame_idx = (raw_frame // 8) * 8
         frame_idx = max(0, min(frame_idx, max_valid_frame))

@@ -299,6 +299,20 @@ HANDLERS = {
         refine_guide_strength=float(opts.get("refine_guide_strength", 0.3)),
         identity_anchor_image=_upload_opt(opts, "identity_anchor"),
         identity_strength=float(opts.get("identity_strength", 0.3)),
+        # IC-LoRA stack (HDR, scene-emb, etc). --ic-loras is a comma-separated
+        # list of NAME:STRENGTH (strength defaults to 1.0). Requires
+        # --ic-lora-reference (path to a reference image, uploaded server-side).
+        # Without the reference image the LoRA weights stack but produce no
+        # visible effect — ImagePrepForICLora + LTXAddVideoICLoRAGuide is the
+        # mechanism that makes the IC-LoRA actually do anything.
+        ic_loras=[
+            (parts[0].strip(), float(parts[1]) if len(parts) > 1 else 1.0)
+            for parts in (s.split(":") for s in opts.get("ic_loras", "").split(",") if s.strip())
+        ] or None,
+        ic_lora_reference_filename=upload_if_local(opts.get("ic_lora_reference", ""))
+            if opts.get("ic_lora_reference") else None,
+        ic_lora_reference_strength=float(opts.get("ic_lora_reference_strength", 1.0)),
+        ic_lora_reference_size=int(opts.get("ic_lora_reference_size", 1024)),
         seed=seed),
     "continuation": lambda opts, seed, prompt: ltx2.ltx2_continuation_to_video(
         prev_video_filename=upload_if_local(opts.get("prev_video", "")),

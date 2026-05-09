@@ -431,17 +431,73 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
            base_guide_strength=0.7, refine_guide_strength=0.3,
            identity_anchor_image=None, identity_strength=0.3,
            source_audio_filename=None,
+           ic_loras=None,
+           ic_lora_reference_filename=None,
+           ic_lora_reference_strength=1.0,
+           ic_lora_reference_size=1024,
            ckpt=CKPT, text_encoder=TEXT_ENCODER):
+    """
+    ic_loras: optional list of (lora_name, strength) tuples. Each is loaded
+        via Lightricks' LTXICLoRALoaderModelOnly node which is required for
+        IC-LoRA weights (e.g. ltx-2.3-22b-ic-lora-hdr-0.9.safetensors); the
+        regular LoraLoaderModelOnly does not extract the latent_downscale_factor
+        these LoRAs need. Stack multiple in order — typically one main IC-LoRA
+        + one scene-emb companion.
+    ic_lora_reference_filename: REQUIRED when ic_loras is set. The IC-LoRA
+        only acts when paired with a reference image fed through the
+        ImagePrepForICLora + LTXAddVideoICLoRAGuide chain. The IC-LoRA
+        weights without the conditioning image have no visible effect.
+    ic_lora_reference_strength: strength on the LTXAddVideoICLoRAGuide
+        node — how strongly the IC-LoRA reference biases the latent.
+    ic_lora_reference_size: ImagePrepForICLora target size (square).
+    """
     g = WorkflowGraph()
     checkpoint, clip, audio_vae, upscaler = _loaders(g, ckpt, text_encoder)
     model = _distilled_lora(g, checkpoint[0])
     model = _apply_extra_lora(g, model, camera_lora, camera_lora_strength)
+    # IC-LoRAs (e.g. HDR, Union-Control) — applied AFTER distilled+camera so
+    # they sit closest to the sampler. Each IC-LoRA loader returns
+    # (model, latent_downscale_factor); we keep only the model output.
+    ic_lora_active = bool(ic_loras and ic_lora_reference_filename)
+    if ic_loras:
+        for lora_name, lora_strength in ic_loras:
+            ic_load = g.node("LTXICLoRALoaderModelOnly",
+                              model=model[0],
+                              lora_name=lora_name,
+                              strength_model=float(lora_strength))
+            model = ic_load
     cond = _encode_prompts(g, clip[0], prompt, negative, fps)
 
     image_ref = image_ref_builder(g) if image_ref_builder else None
     video_latent = _base_video_latent(g, width, height, length,
                                       vae=checkpoint[2], image_ref=image_ref,
                                       strength=base_guide_strength)
+
+    # IC-LoRA reference image conditioning. Loads the reference, preps it
+    # to a square tile via ImagePrepForICLora (the node centers + pads, no
+    # crop), then injects it via LTXAddVideoICLoRAGuide which adds an
+    # IC-LoRA-specific conditioning branch on top of the existing
+    # positive/negative tuple. Frame_idx=0 makes it a first-frame style
+    # bias (HDR envelope, lighting palette); use frame_idx=-1 or middle
+    # for late-shot biases. Returns (positive, negative, latent).
+    if ic_lora_active:
+        ic_ref_load = g.node("LoadImage",
+                              image=ic_lora_reference_filename)
+        ic_ref_prep = g.node("ImagePrepForICLora",
+                              reference_image=ic_ref_load[0],
+                              output_width=int(ic_lora_reference_size),
+                              output_height=int(ic_lora_reference_size),
+                              border_width=0)
+        ic_guide = g.node("LTXAddVideoICLoRAGuide",
+                           positive=cond[0], negative=cond[1],
+                           vae=checkpoint[2], latent=video_latent[0],
+                           image=ic_ref_prep[0],
+                           frame_idx=0,
+                           strength=float(ic_lora_reference_strength))
+        # Re-bind cond + video_latent so downstream uses the IC-LoRA-conditioned
+        # variants. ic_guide outputs are (positive, negative, latent).
+        cond = (ic_guide[0], ic_guide[1])
+        video_latent = (ic_guide[2],)
 
     # Optional identity anchor — injects the character reference at a
     # MIDDLE frame (not frame_idx=-1, which would make this a flf2v-style
@@ -564,6 +620,10 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
                                refine_guide_strength=0.3,
                                identity_anchor_image=None,
                                identity_strength=0.3,
+                               ic_loras=None,
+                               ic_lora_reference_filename=None,
+                               ic_lora_reference_strength=1.0,
+                               ic_lora_reference_size=1024,
                                checkpoint_name=None, text_encoder=None,
                                **_):
     """Image+Audio → Video.
@@ -592,6 +652,10 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
                   identity_anchor_image=identity_anchor_image,
                   identity_strength=identity_strength,
                   source_audio_filename=audio_filename,
+                  ic_loras=ic_loras,
+                  ic_lora_reference_filename=ic_lora_reference_filename,
+                  ic_lora_reference_strength=ic_lora_reference_strength,
+                  ic_lora_reference_size=ic_lora_reference_size,
                   ckpt=checkpoint_name or CKPT,
                   text_encoder=text_encoder or TEXT_ENCODER)
 

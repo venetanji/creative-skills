@@ -901,6 +901,32 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     if scene.get("fast") or (spec.get("video") or {}).get("fast"):
         common += ["--fast"]
 
+    # Optional HDR (or other) IC-LoRA stack — sourced from video.hdr_lora
+    # (project-wide) or scene.hdr_lora (per-scene override). Either is a dict:
+    #   {file: <safetensors>, strength: 1.0, reference: <png path>,
+    #    reference_strength: 1.0, scene_emb: <safetensors> (optional),
+    #    scene_emb_strength: 1.0}
+    # or null/missing to disable. The reference image is mandatory when an
+    # IC-LoRA is set — the LoRA weights only act in concert with the
+    # ImagePrepForICLora + LTXAddVideoICLoRAGuide chain that consumes the
+    # reference. Without it the LoRA stacks have no visible effect.
+    hdr_cfg = scene.get("hdr_lora") if "hdr_lora" in scene else (vs.get("hdr_lora") or None)
+    if hdr_cfg:
+        ic_pairs: list[str] = []
+        ic_pairs.append(f"{hdr_cfg['file']}:{float(hdr_cfg.get('strength', 1.0)):.2f}")
+        if hdr_cfg.get("scene_emb"):
+            ic_pairs.append(
+                f"{hdr_cfg['scene_emb']}:{float(hdr_cfg.get('scene_emb_strength', 1.0)):.2f}")
+        ref = hdr_cfg.get("reference")
+        if not ref:
+            sys.exit("video.hdr_lora.reference is required when hdr_lora is set")
+        ref_path = (project / ref).resolve() if not Path(ref).is_absolute() else Path(ref)
+        if not ref_path.exists():
+            sys.exit(f"video.hdr_lora.reference points at {ref_path} which does not exist")
+        common += ["--ic_loras", ",".join(ic_pairs),
+                   "--ic_lora_reference", str(ref_path),
+                   "--ic_lora_reference_strength", str(float(hdr_cfg.get("reference_strength", 1.0)))]
+
     # guides: optional yaml list of additional keyframe guides at specified
     # positions within the shot. When present, route to `multiguide`
     # (chained LTXVAddGuides) instead of plain ia2v — the first-frame
@@ -927,13 +953,17 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         spec_gm = importlib.util.spec_from_file_location("storyboard_guides", sb_lib)
         gm = importlib.util.module_from_spec(spec_gm); spec_gm.loader.exec_module(gm)
 
-        # Resolve at_sec / at_relative / at_frame for each guide entry.
+        # Resolve at_sec / at_relative / at_frame / at_song_sec for each
+        # guide entry. scene_start_sec lets specs use song-absolute time
+        # (e.g. drum hit at 73.14s) without subtracting the scene's start
+        # by hand — handy when the guide list is authored from MIDI markers.
         resolved = gm.resolve_guides(
             guides_yaml,
             duration_sec=float(effective_duration),
             fps=int(vs["fps"]),
             project_dir=project,
             token_resolver=lambda tok: _resolve_image(spec, project, idx, tok),
+            scene_start_sec=float(scene.get("start_sec", 0.0)),
         )
         # Prepend frame-0 anchor if caller didn't put one there — the
         # shot's `image:` (already resolved to image_path) fills that slot.
@@ -1228,6 +1258,28 @@ def cmd_assemble(spec: dict, project: Path) -> None:
         dur_out = _transition_duration(spec, i)      if trans_enabled and i < n else 0.0
         skip_front = dur_in / 2.0
         keep = float(s["duration_sec"]) - dur_in / 2.0 - dur_out / 2.0
+        # Guard: if a scene is shorter than its flanking transitions consume,
+        # `keep` goes negative and ffmpeg refuses the trim. Rather than crash
+        # on the whole assemble, shrink each transition proportionally so the
+        # scene retains at least MIN_NATIVE_KEEP of native content. Whichever
+        # transition gets clamped here will look slightly out-of-sync with
+        # its rendered duration but the alternative is a crashed assemble.
+        MIN_NATIVE_KEEP = 0.25
+        if keep < MIN_NATIVE_KEEP:
+            shortfall = (MIN_NATIVE_KEEP - keep)
+            # Each transition gives up half the shortfall, capped at its own
+            # current half-share so we don't go negative on dur_*.
+            give_in = min(dur_in / 2.0, shortfall / 2.0)
+            give_out = min(dur_out / 2.0, shortfall - give_in)
+            dur_in = max(0.0, dur_in - 2.0 * give_in)
+            dur_out = max(0.0, dur_out - 2.0 * give_out)
+            skip_front = dur_in / 2.0
+            keep = float(s["duration_sec"]) - dur_in / 2.0 - dur_out / 2.0
+            keep = max(MIN_NATIVE_KEEP, keep)
+            print(f"[WARN] scene {i} '{s.get('label')}' shorter than its transitions "
+                  f"({s['duration_sec']:.2f}s vs {dur_in/2.0+dur_out/2.0:.2f}s consumed); "
+                  f"shrunk to dur_in={dur_in:.2f}/dur_out={dur_out:.2f}, keep={keep:.2f}",
+                  file=sys.stderr)
 
         clip_paths.append(p)
         starts.append(skip_front)
