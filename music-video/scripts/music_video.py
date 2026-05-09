@@ -961,6 +961,23 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
             prev_last = project / "scenes" / f"{_scene_stem(idx - 1, prev_label)}-last.png"
             if prev_last.exists():
                 ia2v_extras += ["--image-refs", str(prev_last)]
+        # ia2v guide strengths — control how strongly the anchor PNG locks
+        # the rendered scene's opening frames. ltx2.py's hardcoded defaults
+        # are base=0.5 / refine=0.3 (deliberately weak — model has motion
+        # freedom). For music-video work where the anchor was authored to
+        # define composition + lighting + character placement, those
+        # defaults throw the composition away: the singer's face survives
+        # but the corridor / stage / kitchen environment is reinvented
+        # from prompt. Default here to 0.9 / 0.7 so anchor PNGs actually
+        # drive the scene's first frame. Override via video.* (project)
+        # or scene[].* (per-scene). Drop to ~0.5 / 0.3 on action shots
+        # where motion freedom matters more than first-frame fidelity.
+        base_gs = scene.get("base_guide_strength",
+                            vs.get("base_guide_strength", 0.9))
+        refine_gs = scene.get("refine_guide_strength",
+                              vs.get("refine_guide_strength", 0.7))
+        ia2v_extras += ["--base_guide_strength", f"{float(base_gs):.2f}",
+                        "--refine_guide_strength", f"{float(refine_gs):.2f}"]
         cmd = ["python3", str(COMFY), "ia2v",
                "--image", image_path,
                "--audio", str(slice_mp3)] + ia2v_extras + common
