@@ -14,6 +14,26 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+
+def _suno_mcp_base_url(config_path: str) -> str | None:
+    """Read the mcporter config and return the agent's suno base URL.
+
+    Strips the trailing ``/mcp`` so the returned base can be reused for
+    both ``/mcp`` (control plane) and ``/audio/<file>.mp3`` (downloads).
+    Returns None if the config doesn't have a suno entry.
+    """
+    try:
+        with open(config_path, "r") as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    entry = (cfg.get("mcpServers") or {}).get("suno") or {}
+    url = entry.get("url")
+    if not url:
+        return None
+    return url[:-4] if url.endswith("/mcp") else url.rstrip("/")
+
+
 def generate_song(lyrics, tags, title, instrumental=False, timeout=120):
     """
     Generate a song with Suno and download it.
@@ -175,7 +195,15 @@ def generate_song(lyrics, tags, title, instrumental=False, timeout=120):
         return False
 
     def _mcp_tailscale_url(vid: str) -> str | None:
-        """Trigger MCP download_song and return the tailscale-reachable URL."""
+        """Trigger MCP download_song and return the tailscale-reachable URL.
+
+        The server returns a `Stream URL: <SUNO_PUBLIC_URL>/audio/<short>.mp3`
+        line. We can't trust that URL verbatim (cross-tailnet agents can't
+        reach it); instead we extract just the filename and reattach it to
+        the agent's own MCP base URL — that way the same agent code works
+        whether mcporter points at https://suno-mcp.tail9683c.ts.net/mcp
+        or at a bridge URL like https://comfyui-bridge.tail74c072.ts.net:8190/mcp.
+        """
         print(f"  Triggering MCP download for {vid}...", file=sys.stderr)
         dr = subprocess.run(
             ["npx", "mcporter", "call", "suno.download_song",
@@ -183,13 +211,28 @@ def generate_song(lyrics, tags, title, instrumental=False, timeout=120):
             capture_output=True, text=True, cwd=os.path.expanduser("~"), timeout=300,
         )
         body = (dr.stdout or "") + (dr.stderr or "")
-        m = re.search(r'Local URL:\s*(http://[^\s"\'<>]+)', body)
-        if m:
-            url = m.group(1).replace('0.0.0.0', 'localhost:8085')
+        # Parse `Downloaded to: /downloads/<filename>` to get the canonical
+        # filename (e.g. "ef0722ad.mp3"), then build the audio URL from the
+        # mcporter-configured suno base URL.
+        m = re.search(r'Downloaded to:\s*\S*?([0-9a-f]{8}\.mp3)', body)
+        if not m:
+            # Fall back to the legacy `Stream URL:` / `Local URL:` shapes for
+            # older suno-mcp builds. If neither matches, give up and let the
+            # outer code fall back to the direct CDN URL.
+            m2 = re.search(r'(?:Stream|Local) URL:\s*(\S+/audio/[0-9a-f]{8}\.mp3)', body)
+            if not m2:
+                print(f"  MCP call returned no Stream URL (rc={dr.returncode})", file=sys.stderr)
+                return None
+            print(f"  MCP URL: {m2.group(1)}", file=sys.stderr)
+            return m2.group(1)
+        filename = m.group(1)
+        base = _suno_mcp_base_url(config)
+        url = f"{base}/audio/{filename}" if base else None
+        if url:
             print(f"  MCP URL: {url}", file=sys.stderr)
-            return url
-        print(f"  MCP call returned no Local URL (rc={dr.returncode})", file=sys.stderr)
-        return None
+        else:
+            print(f"  Could not derive base URL from mcporter config", file=sys.stderr)
+        return url
 
     for i, vid in enumerate(all_ids):
         out = output_dir / f"suno_{vid}.mp3"

@@ -13,11 +13,13 @@ metadata:
 
 # Suno MCP Skill
 
-Run: `python3 ~/.openclaw/skills/suno-mcp/scripts/generate_song.py --lyrics='...' --tags='...' --title='...'` (timeout 400s)
+Run: `python3 $(find /home /workspace -maxdepth 6 -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1) --lyrics='...' --tags='...' --title='...'` (timeout 400s)
 
-⚠️ `--tags` = full producer brief (NOT keywords). Read first: `cat ~/.openclaw/skills/suno-mcp/references/style-guide.md`
+⚠️ `--tags` = full producer brief (NOT keywords). Read first: `cat <skill-dir>/references/style-guide.md`
 
-**Lyrics:** `[Verse]`/`[Chorus]`/`[Bridge]`/`[Instrumental]` tags — guide: `cat ~/.openclaw/skills/suno-mcp/references/lyrics-guide.md`
+**Lyrics:** `[Verse]`/`[Chorus]`/`[Bridge]`/`[Instrumental]` tags — guide: `cat <skill-dir>/references/lyrics-guide.md`. Read it before drafting — it's the difference between AI-sounding lyrics and lyrics worth listening to.
+
+**🚨 Two variants per generation.** Suno *always* returns 2 takes from a single request. The helper script downloads BOTH (`local_files` is a list). Present both to the user and let them choose — agents that send only the first systematically lose half the value of every generation. The full output JSON has `local_files` (all variants) and `local_file` (variant 1, kept for backward compat).
 
 Generate AI music using Suno's API via the MCP server.
 
@@ -26,22 +28,30 @@ Generate AI music using Suno's API via the MCP server.
 Use the Python helper script — it handles shell quoting safely for long lyrics and detailed style prompts. Direct `mcporter call` on the command line will fail with anything beyond short, simple values.
 
 ```python
-# 1. Locate the script (works on host and inside sandbox)
-SCRIPT=$(find /home -maxdepth 6 -name "generate_song.py" -path "*/suno-mcp/scripts/*" 2>/dev/null | head -1)
+# 1. Locate the script (works on host install, sandbox install, or fresh clone).
+#    Order: $HOME first (host install), /home (other-user paths), /workspace
+#    (sandbox repo checkouts).
+SCRIPT=$(find "$HOME" /home /workspace -maxdepth 7 \
+        -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
 
-# 2. Generate + auto-download (3–5 minutes, use 400s timeout)
-exec({
+# 2. Generate + auto-download BOTH variants (3–5 minutes, use 400s timeout)
+result = exec({
     "command": f"python3 {SCRIPT} --lyrics='{lyrics}' --tags='{tags}' --title='{title}'",
     "timeout": 400
 })
+# result is a JSON dict with at least:
+#   local_files: ["<path>/suno_<id1>.mp3", "<path>/suno_<id2>.mp3"]
+#   all_ids:     ["<id1>", "<id2>"]
+#   local_file:  <local_files[0]>   (legacy alias)
 
-# 3. Send the file (local_file path is in the JSON output)
-message({
-    "action": "send",
-    "channel": "discord",
-    "filePath": "<local_file from output>",
-    "caption": "🎵 Here's your track!"
-})
+# 3. Send BOTH to the user, not just the first.
+for i, path in enumerate(result["local_files"], start=1):
+    message({
+        "action": "send",
+        "channel": "discord",
+        "filePath": path,
+        "caption": f"🎵 Variant {i}/{len(result['local_files'])} — https://suno.com/song/{result['all_ids'][i-1]}",
+    })
 ```
 
 For instrumental tracks, pass `--instrumental` instead of `--lyrics`.
@@ -192,15 +202,26 @@ The `tags` field is a **text-to-music prompt**, not a keyword list. Write it lik
 
 ## Output
 
-Suno always generates **two song variants** from a single request. Both are equally valid. Present both to the user with their Suno links so they can listen and choose their favourite. The response from `generate_song` contains IDs for both; download and share whichever the user prefers, or share both.
+Suno always generates **two song variants** from a single request. Both are equally valid. The helper script downloads both — `local_files` is the canonical list, `local_file` is a legacy alias for the first variant. Default behaviour for any agent: send both with their Suno preview URLs so the user can pick (see Quick Start step 3).
 
 ## Troubleshooting
 
-- **Shell quoting errors**: Always use the Python script, not `mcporter call`, for anything with real lyrics or long style prompts
-- **Login required**: Run `mcporter call suno.suno_login --config ~/.openclaw/config/mcporter.json` first
-- **Wrong parameter name**: Use `lyrics`, not `prompt` (deprecated)
-- **Timeout**: The full pipeline takes 3–5 minutes; always set exec timeout ≥ 400 seconds
+- **Shell quoting errors**: Always use the Python script, not `mcporter call`, for anything with real lyrics or long style prompts.
+- **Login required**: Run `mcporter call suno.suno_login --config <mcporter-config>` first. The login persists in the saved Chrome profile.
+- **Wrong parameter name**: Use `lyrics`, not `prompt` (deprecated).
+- **Timeout**: The full pipeline takes 3–5 minutes; always set exec timeout ≥ 400 seconds.
+- **"No Stream URL" warning**: harmless — script falls back to the direct CDN URL.
+- **Only one variant in `local_files`**: bug. Both should always be present. Re-run.
 
 ## MCP Config
 
-`~/.openclaw/config/mcporter.json` — Server: `https://localhost:8085/mcp`
+The skill reads `~/.openclaw/config/mcporter.json` (or the path the host
+runtime configured for `mcporter`). The `suno` server URL is whichever
+endpoint the agent's tailnet can actually reach:
+
+| agent location | suno URL |
+|---|---|
+| `tail9683c` (operator's personal tailnet) | `https://suno-mcp.tail9683c.ts.net/mcp` |
+| `tail74c072` (`tag:overlord` sandboxes) | `https://comfyui-bridge.tail74c072.ts.net:8190/mcp` (via `bootstrap/media-relay`) |
+
+The script derives the audio download URL from this same base — `<base>/audio/<short-id>.mp3` — so the same code works on both tailnets without any agent-side host substitution.
