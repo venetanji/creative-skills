@@ -297,14 +297,30 @@ def _ensure_dirs(project: Path) -> None:
 
 
 def _video_spec(spec: dict) -> dict:
-    v = spec.get("video", {})
+    """Return spec.video coerced into a renderer-friendly shape.
+
+    Historically this returned ONLY fps/width/height/negative/tail_buffer_sec
+    and silently dropped every other key from spec.video. That meant
+    every video-level field added since (lipsync_audio, hdr_lora,
+    base_guide_strength, refine_guide_strength, fast, transitions, ...)
+    looked correct in the spec but never actually reached the renderer
+    when read via `vs.get(...)` — a long-standing silent bug.
+
+    Now we pass through every key from spec.video and just OVERLAY the
+    five canonical fields with coerced types on top, so existing
+    `vs["fps"]` / `vs["width"]` etc. still get the int/float guarantees
+    they relied on, and any new field is also reachable via
+    `vs.get("lipsync_audio")` / `vs.get("hdr_lora")` etc. without
+    refactoring callers.
+    """
+    v = dict(spec.get("video") or {})
     w, h = (v.get("resolution") or [1024, 576])
-    return {
-        "fps": int(v.get("fps", 24)),
-        "width": int(w), "height": int(h),
-        "negative": v.get("negative"),
-        "tail_buffer_sec": float(v.get("tail_buffer_sec", 0.0) or 0.0),
-    }
+    v["fps"] = int(v.get("fps", 24))
+    v["width"] = int(w)
+    v["height"] = int(h)
+    v["negative"] = v.get("negative")
+    v["tail_buffer_sec"] = float(v.get("tail_buffer_sec", 0.0) or 0.0)
+    return v
 
 
 # ---------- subcommands ----------
@@ -324,10 +340,23 @@ MAX_SCENE_DURATION = 15.0
 # in prompts don't break. Applied to every scene.prompt and anchor.prompt.
 def _expand_subjects(text: str, spec: dict) -> str:
     subjects = spec.get("subjects") or {}
-    if not subjects or not isinstance(text, str):
+    if not isinstance(text, str):
         return text
     for name, desc in subjects.items():
         text = text.replace("{" + str(name) + "}", str(desc))
+    # Defensive: warn on any leftover {token} that wasn't substituted. Common
+    # cause: spec author wrote `{narrator}` in scene prompts but forgot the
+    # top-level `subjects:` block, so the literal `{narrator}` string was
+    # being shipped to flux2 / LTX. Models tolerate it (CLIP treats it as
+    # noise) but the prompt is silently degraded.
+    import re
+    leftover = re.findall(r"\{([a-zA-Z][a-zA-Z0-9_-]*)\}", text)
+    if leftover:
+        unique = sorted(set(leftover))
+        print(f"[WARN] unresolved subject token(s) in prompt: "
+              f"{', '.join('{' + n + '}' for n in unique)} — "
+              f"add a top-level `subjects:` block to your spec",
+              file=sys.stderr)
     return text
 
 
@@ -910,7 +939,7 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     # IC-LoRA is set — the LoRA weights only act in concert with the
     # ImagePrepForICLora + LTXAddVideoICLoRAGuide chain that consumes the
     # reference. Without it the LoRA stacks have no visible effect.
-    hdr_cfg = scene.get("hdr_lora") if "hdr_lora" in scene else (vs.get("hdr_lora") or None)
+    hdr_cfg = scene.get("hdr_lora") if "hdr_lora" in scene else vs.get("hdr_lora")
     if hdr_cfg:
         ic_pairs: list[str] = []
         ic_pairs.append(f"{hdr_cfg['file']}:{float(hdr_cfg.get('strength', 1.0)):.2f}")
