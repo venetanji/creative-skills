@@ -555,21 +555,19 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                                   output_width=prep_w,
                                   output_height=prep_h,
                                   border_width=0)
-        # latent_downscale_factor: the LoRA metadata exposes a value via
-        # LTXICLoRALoaderModelOnly[1] but the Union-Control LoRA's metadata
-        # value (2.0) produces a heavily LEFT-BIASED output where the
-        # rendered content collapses to the left half of the frame. The
-        # official Lightricks Union-Control workflow stores the widget as
-        # 1 — passing 1.0 here matches that and gives full-frame coverage.
-        # If you ever load a different IC-LoRA whose metadata value is the
-        # right one, plumb a flag to switch back to ic_loaded[1] (slot 1).
+        # latent_downscale_factor: source it from LTXICLoRALoaderModelOnly's
+        # slot 1 — the LoRA's metadata-embedded factor (2.0 for Union-Control,
+        # 1.0 for HDR). The official workflow's wired pattern. Earlier we
+        # tried hardcoding 1.0 to fix the left-bias bug — that didn't help;
+        # the actual fix was switching ImagePrepForICLora → ResizeImageMaskNode
+        # for video references (above).
         ic_guide = g.node("LTXAddVideoICLoRAGuide",
                            positive=cond[0], negative=cond[1],
                            vae=checkpoint[2], latent=video_latent[0],
                            image=ic_ref_prep[0],
                            frame_idx=0,
                            strength=float(ic_lora_reference_strength),
-                           latent_downscale_factor=1.0,
+                           latent_downscale_factor=ic_loaded[1],
                            crop="disabled",
                            use_tiled_encode=False,
                            tile_size=256,
