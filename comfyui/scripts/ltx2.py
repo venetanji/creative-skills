@@ -615,10 +615,18 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
     av_pass1 = _pass_one(g, model, cond_for_sampling, av_latent, seed=base_seed)
     source_audio_seconds = float(length) / float(fps) if source_audio_filename else None
 
+    # `strip_guides_cond` triggers an LTXVCropGuides pass before decode. We
+    # need it whenever any LTXVAddGuide / LTXAddVideoICLoRAGuide added
+    # conditioning frames to the latent — those frames stay in the output
+    # otherwise and the rendered video runs ~2× the requested seconds with
+    # latent-noise tail (the "the video is 13s long with noise" bug).
+    # Trigger on either id_branch (LTXVAddGuide) OR ic_lora_active
+    # (LTXAddVideoICLoRAGuide).
+    needs_crop = id_branch is not None or ic_lora_active
     if fast:
         _decode_and_save(g, av_pass1, vae=checkpoint[2], audio_vae=audio_vae,
                          fps=fps, filename_prefix=filename_prefix,
-                         strip_guides_cond=(cond_for_sampling if id_branch else None),
+                         strip_guides_cond=(cond_for_sampling if needs_crop else None),
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     else:
@@ -655,7 +663,7 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                              seed=base_seed + 1)
         _decode_and_save(g, av_final, vae=checkpoint[2], audio_vae=audio_vae,
                          fps=fps, filename_prefix=filename_prefix,
-                         strip_guides_cond=(final_cond if id_branch else None),
+                         strip_guides_cond=(final_cond if needs_crop else None),
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     return g.to_dict()
