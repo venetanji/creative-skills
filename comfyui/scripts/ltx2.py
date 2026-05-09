@@ -622,6 +622,15 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     else:
+        # ┌─ 2-PASS IC-LoRA TODO ─────────────────────────────────────────┐
+        # │ When ic_lora_active AND fast=False, we should ALSO re-apply  │
+        # │ LTXAddVideoICLoRAGuide on the upsampled pass-2 latent —      │
+        # │ same pattern as id_branch below. Without it, the IC-LoRA's   │
+        # │ conditioning is dropped through the refine step. See         │
+        # │ STRUCTURAL-FOLLOWUPS.md "2-pass IC-LoRA refine — open work"  │
+        # │ for the ~30-LOC fix sketch. Not yet implemented because all  │
+        # │ current renders are fast=True for iteration speed.           │
+        # └──────────────────────────────────────────────────────────────┘
         av_for_pass2, cropped_cond = _upsample_between(
             g, av_pass1, cond, vae=checkpoint[2], upscaler=upscaler,
             image_ref=image_ref,
