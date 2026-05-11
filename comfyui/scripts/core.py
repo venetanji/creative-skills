@@ -117,9 +117,19 @@ def upload_if_local(path: str, upload_flag: bool = True) -> str:
 
 
 def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notify: str | None = None, caption_template: str | None = None, user_prompt: str | None = None):
-    # Inside sandbox (home=/home/sandbox), /workspace is mounted rw.
-    # Redirect output_dir to /workspace/media/outbound so downloads succeed.
-    if Path.home() == Path("/home/sandbox"):
+    # Inside an OpenClaw sandbox, the default --output-dir (./outputs/) lands
+    # in /home/sandbox which is ephemeral and not visible host-side. Redirect
+    # to a workspace-mounted dir so downloads survive the session and the
+    # MEDIA: directive can resolve them. Precedence:
+    #   1. OPENCLAW_MEDIA_DIR  — explicit override (full path, no suffix).
+    #   2. /workspace/media/outbound — sandbox bind-mount default.
+    # On commons-tier sandboxes /workspace is mounted READ-ONLY, so the env
+    # var is required there; without it the subsequent mkdir raises
+    # PermissionError. Mirrors suno-mcp's SUNO_OUTPUT_DIR pattern.
+    sandbox_media_dir = os.environ.get("OPENCLAW_MEDIA_DIR")
+    if sandbox_media_dir:
+        output_dir = Path(sandbox_media_dir)
+    elif Path.home() == Path("/home/sandbox"):
         output_dir = Path("/workspace/media/outbound")
     def _retrying(url, *, data=None, method="GET", max_transient=30):
         """GET/POST with retry on transient HTTP 5xx / connection errors.
@@ -216,15 +226,16 @@ def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, capti
 
     # Copy outputs to the media/outbound dir inside the agent's workspace so
     # they are reachable via a `MEDIA:<host-path>` directive. Resolution order:
-    #   1. OPENCLAW_MEDIA_DIR  — explicit override (expects `outbound/` to
-    #      exist or be creatable inside it).
-    #   2. /workspace          — the OpenClaw sandbox convention (bind-mounted
-    #      to the agent's workspace dir on the host).
+    #   1. OPENCLAW_MEDIA_DIR  — explicit override (full path, used as-is —
+    #      mirrors suno-mcp's SUNO_OUTPUT_DIR semantics).
+    #   2. /workspace/media/outbound — the OpenClaw sandbox convention
+    #      (bind-mounted to the agent's workspace dir on the host), when
+    #      /workspace is writable.
     #   3. ~/.openclaw/workspace/media/outbound — host install fallback.
     try:
         env_override = os.environ.get("OPENCLAW_MEDIA_DIR")
         if env_override:
-            outbound_dir = Path(env_override) / "outbound"
+            outbound_dir = Path(env_override)
         elif Path("/workspace").is_dir() and os.access("/workspace", os.W_OK):
             outbound_dir = Path("/workspace/media/outbound")
         else:

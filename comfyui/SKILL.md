@@ -30,6 +30,16 @@ The scripts read three environment variables, in priority order:
 
 **OpenClaw sandbox**: agents in an agentic-media sandbox have these vars injected at boot via the per-sandbox `credentials.env` propagation; agent prompts and skill code don't need to mention them.
 
+## Output directory configuration
+
+| Var | Used by | Falls back to |
+|---|---|---|
+| `OPENCLAW_MEDIA_DIR` | all comfy_graph commands — where final assets land AND where the post-run outbound copy goes | `/workspace/media/outbound` (when in an OpenClaw sandbox) → `~/.openclaw/workspace/media/outbound` (host install) |
+
+Precedence: `OPENCLAW_MEDIA_DIR` > `/workspace/media/outbound` default in sandbox > `--output-dir` CLI arg (i.e. the env var, when set, **overrides** the CLI arg for sandbox writes — set the env var per-sandbox, leave `--output-dir` alone). Mirrors suno-mcp's `SUNO_OUTPUT_DIR` pattern.
+
+**Why it exists**: commons-tier OpenClaw sandboxes bind-mount `/workspace` **read-only**, so the previous hardcoded `/workspace/media/outbound` raised `PermissionError` on `mkdir`. Set `OPENCLAW_MEDIA_DIR` to a writable path (e.g. `/home/sandbox/outbound`) for those sandboxes.
+
 ## Script paths (use absolute; tilde expansion is unreliable under `exec`)
 
 The canonical install location is `~/.openclaw/skills/comfyui/scripts/…`. In OpenClaw sandboxes that resolves to `/home/sandbox/.openclaw/skills/comfyui/scripts/…`; on a host install it depends on the user account that ran the install. `~/.openclaw/…` works in an interactive shell but NOT always under `exec` — pass an absolute path when invoking from another agent or process.
@@ -266,6 +276,7 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 ### Environment variables
 - `COMFY_URL_FLUX` / `COMFY_URL_VIDEO` — separate endpoints for the flux (image/TTS/audio) and video servers when you run them on different hosts. In an OpenClaw sandbox these are pre-set via per-sandbox `credentials.env`, so agents can just run `comfy_graph.py t2i …` and the right server is picked automatically.
 - `COMFY_URL` — single-server fallback (used as default when the per-class env var is unset, and by `comfy_run.py` / `comfy_query.py` which talk to one server at a time). Default `http://localhost:8188`. Set `http://localhost:8000` for ComfyUI Desktop.
+- `OPENCLAW_MEDIA_DIR` — override the sandbox output directory (final asset writes + outbound copy). Full path, used as-is. Falls back to `/workspace/media/outbound` in a sandbox, or `~/.openclaw/workspace/media/outbound` on host. Required on commons-tier sandboxes where `/workspace` is read-only.
 - `OPENCLAW_NOTIFY_TARGET` — default notification target
 
 ### Discord attachments — `MEDIA:` directive in your reply
