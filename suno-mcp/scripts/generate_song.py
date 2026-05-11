@@ -1,251 +1,336 @@
 #!/usr/bin/env python3
 """
-Generate a song with Suno MCP and download the file.
-Returns the local file path for attachment.
+generate_song.py — Generate a song with the Suno MCP server and download
+the audio file(s) locally.
+
+Talks to the Suno MCP server directly over the MCP Streamable HTTP
+transport (JSON-RPC 2.0 framed inside an SSE-style ``event: message``
+envelope). No mcporter / npx dependency — just the standard library.
+
+Usage:
+  generate_song.py --lyrics='...' --tags='...' --title='...'
+  generate_song.py --instrumental --tags='...' --title='...'
+  generate_song.py --tags='...' --title='...' --negative-prompt='heavy metal'
+  generate_song.py --tags='...' --title='...' --dry-run   # show request, no API call
+
+Env:
+  SUNO_MCP_URL      Base URL of the Suno MCP server. Default
+                    ``http://localhost:8190``. The MCP endpoint is
+                    ``<SUNO_MCP_URL>/mcp`` and downloaded songs are
+                    served at ``<SUNO_MCP_URL>/audio/<file>.mp3``.
+  SUNO_OUTPUT_DIR   Where to save downloaded MP3s. Default
+                    ``./outputs/suno`` (relative to CWD).
+
+Both env vars can be overridden per-call with ``--url`` and
+``--output-dir`` CLI flags (CLI wins over env).
 """
 
-import subprocess
+import argparse
 import json
 import os
 import re
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
+from typing import Any
+
+DEFAULT_BASE = "http://localhost:8190"
+DEFAULT_OUTPUT_DIR = "./outputs/suno"
 
 
-def _suno_mcp_base_url(config_path: str) -> str | None:
-    """Read the mcporter config and return the agent's suno base URL.
+# ----------------------------------------------------------------------
+# Minimal MCP-over-HTTP client (Streamable HTTP transport).
+# One session per process: initialize → notifications/initialized → calls.
+# ----------------------------------------------------------------------
 
-    Strips the trailing ``/mcp`` so the returned base can be reused for
-    both ``/mcp`` (control plane) and ``/audio/<file>.mp3`` (downloads).
-    Returns None if the config doesn't have a suno entry.
+class MCPClient:
+    """Tiny synchronous MCP Streamable-HTTP client.
+
+    Handles the SSE-framed ``event: message\\ndata: <json>`` response
+    envelope FastMCP uses by default. Holds the ``mcp-session-id``
+    header returned by ``initialize`` and reuses it for subsequent calls.
     """
-    try:
-        with open(config_path, "r") as f:
-            cfg = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    entry = (cfg.get("mcpServers") or {}).get("suno") or {}
-    url = entry.get("url")
-    if not url:
-        return None
-    return url[:-4] if url.endswith("/mcp") else url.rstrip("/")
 
+    def __init__(self, base_url: str, client_name: str = "suno-mcp-skill",
+                 client_version: str = "0.2.0"):
+        self.base = base_url.rstrip("/")
+        self.endpoint = f"{self.base}/mcp"
+        self.session_id: str | None = None
+        self._next_id = 0
+        self.client_name = client_name
+        self.client_version = client_version
 
-def generate_song(lyrics, tags, title, instrumental=False, timeout=120):
-    """
-    Generate a song with Suno and download it.
-    
-    Args:
-        lyrics: Song lyrics (can be empty if instrumental=True)
-        tags: Genre/style tags (e.g., "pop, upbeat, electronic")
-        title: Song title
-        instrumental: True for instrumental track
-        timeout: Max seconds to wait for generation
-    
-    Returns:
-        dict with song info including 'local_file' path
-    """
-    config = os.path.expanduser("~/.openclaw/config/mcporter.json")
-    output_dir = Path(os.path.expanduser("~/.openclaw/workspace/outputs"))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Build mcporter command (use npx to run mcporter). Pass --timeout explicitly
-    # because mcporter's own default is 60s and suno's generate endpoint can take
-    # longer on busy queues — we want it to survive up to the script-level timeout.
-    mcporter_timeout_ms = max(int(timeout) * 1000, 120_000)
-    cmd = ["npx", "mcporter", "call", "suno.generate_song",
-           "--config", config, "--timeout", str(mcporter_timeout_ms)]
+    def _id(self) -> int:
+        self._next_id += 1
+        return self._next_id
 
-    if instrumental:
-        cmd.extend(["make_instrumental=true"])
-    else:
-        cmd.extend([f"lyrics={lyrics}"])
+    def _post(self, body: dict[str, Any], *, timeout: int) -> tuple[dict[str, Any] | None, dict[str, str]]:
+        """POST a JSON-RPC frame, parse the SSE envelope, return (result, headers).
 
-    cmd.extend([f"tags={tags}", f"title={title}"])
-    
-    print(f"Generating song: {title}...", file=sys.stderr)
-    
-    # Retry on transient upstream failures. Includes both non-zero exits
-    # (HTTP 5xx, SSE errors, network hiccups) AND zero-exit responses that
-    # report suno-side timeouts / no-songs-produced.
-    last_err = ""
-    for attempt in range(1, 6):
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                cwd=os.path.expanduser("~"))
-        combined = (result.stderr or "") + (result.stdout or "")
+        Returns (None, headers) for notifications (server returns no body).
+        """
+        data = json.dumps(body).encode("utf-8")
+        headers = {
+            "content-type": "application/json",
+            "accept": "application/json, text/event-stream",
+        }
+        if self.session_id:
+            headers["mcp-session-id"] = self.session_id
+        req = urllib.request.Request(self.endpoint, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read().decode("utf-8", errors="replace")
+                resp_headers = {k.lower(): v for k, v in r.headers.items()}
+        except urllib.error.HTTPError as e:
+            try:
+                body_text = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                body_text = ""
+            raise RuntimeError(f"HTTP {e.code} from {self.endpoint}: {body_text}") from e
 
-        if result.returncode == 0:
-            # Success at mcporter layer — check the response body for suno-side
-            # transient errors (timeout / no songs).
-            suno_retryable_body = any(s in combined for s in (
-                "Song generation timed out",
-                "no new songs appeared",
-                "generation failed",
-                "temporarily unavailable",
-            ))
-            # If we can parse at least one ID we consider it a real success
-            # regardless of other error-adjacent text.
-            if re.search(r"ID:\s*[a-f0-9-]+", combined) and not suno_retryable_body:
-                break
-            if not suno_retryable_body:
-                # No IDs and no known-retryable marker — bail without retrying.
-                break
-            last_err = combined
+        # Notifications return 202 Accepted with no body.
+        if not raw.strip():
+            return None, resp_headers
+
+        # FastMCP wraps single JSON-RPC frames in an SSE envelope:
+        #   event: message
+        #   data: <json>
+        # …possibly followed by other events. Pull out the data: lines.
+        data_chunks: list[str] = []
+        for line in raw.splitlines():
+            if line.startswith("data: "):
+                data_chunks.append(line[6:])
+            elif line.startswith("data:"):
+                data_chunks.append(line[5:].lstrip())
+        if data_chunks:
+            payload = json.loads(data_chunks[-1])
         else:
-            last_err = combined
-            transient = any(s in combined for s in (
-                "HTTP 50", "HTTP 429", "SSE error",
-                "timed out", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN",
+            # Plain JSON body (some MCP servers don't use SSE framing).
+            payload = json.loads(raw)
+        if "error" in payload:
+            err = payload["error"]
+            raise RuntimeError(f"MCP error {err.get('code')}: {err.get('message')}")
+        return payload.get("result"), resp_headers
+
+    def initialize(self, *, timeout: int = 30) -> dict[str, Any]:
+        body = {
+            "jsonrpc": "2.0",
+            "id": self._id(),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": self.client_name, "version": self.client_version},
+            },
+        }
+        result, headers = self._post(body, timeout=timeout)
+        sid = headers.get("mcp-session-id")
+        if sid:
+            self.session_id = sid
+        # Server expects the initialized notification before any tools/* call.
+        note = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+        self._post(note, timeout=timeout)
+        return result or {}
+
+    def call_tool(self, name: str, arguments: dict[str, Any], *, timeout: int = 600) -> dict[str, Any]:
+        body = {
+            "jsonrpc": "2.0",
+            "id": self._id(),
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        result, _ = self._post(body, timeout=timeout)
+        return result or {}
+
+
+# ----------------------------------------------------------------------
+# Suno-specific glue
+# ----------------------------------------------------------------------
+
+# The current Suno MCP responses are plain-text strings (FastMCP
+# generic-wrap). We extract IDs / download URLs / audio filenames by
+# regex. If/when the server emits structured content we can switch to
+# reading `result["structuredContent"]` instead.
+
+_ID_RE = re.compile(r"\bID:\s*([a-f0-9-]{36})", re.IGNORECASE)
+_DL_RE = re.compile(r"\bDownload:\s*(https?://\S+)")
+_FILENAME_RE = re.compile(r"Downloaded to:\s*\S*?([0-9a-f]{8}\.mp3)", re.IGNORECASE)
+_STREAM_RE = re.compile(r"(?:Stream|Local)\s*URL:\s*(\S+/audio/[0-9a-f]{8}\.mp3)", re.IGNORECASE)
+_RETRYABLE_PATTERNS = (
+    "Song generation timed out",
+    "no new songs appeared",
+    "generation failed",
+    "temporarily unavailable",
+)
+
+
+def _text_from_result(result: dict[str, Any]) -> str:
+    """Flatten the tools/call return value to a single string.
+
+    FastMCP tools that wrap a string return value emit
+    ``{"content":[{"type":"text","text":"..."}], "structuredContent":{"result":"..."}}``.
+    """
+    if not result:
+        return ""
+    sc = result.get("structuredContent") or {}
+    if isinstance(sc, dict) and isinstance(sc.get("result"), str):
+        return sc["result"]
+    parts: list[str] = []
+    for item in result.get("content") or []:
+        if isinstance(item, dict) and item.get("type") == "text":
+            parts.append(item.get("text", ""))
+    return "\n".join(parts)
+
+
+def _build_generate_args(lyrics: str, tags: str, title: str, *,
+                         instrumental: bool, negative_prompt: str) -> dict[str, Any]:
+    args: dict[str, Any] = {"tags": tags, "title": title}
+    if instrumental:
+        args["make_instrumental"] = True
+    else:
+        args["lyrics"] = lyrics
+    if negative_prompt:
+        args["negative_prompt"] = negative_prompt
+    return args
+
+
+def _fetch(url: str, dest: Path, *, tries: int = 40, per_try_timeout: int = 30) -> bool:
+    for _ in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; suno-mcp-skill/0.2)"
+            })
+            with urllib.request.urlopen(req, timeout=per_try_timeout) as r:
+                if r.status == 200:
+                    dest.write_bytes(r.read())
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code not in (403, 404):
+                print(f"  HTTP {e.code} on {url}", file=sys.stderr)
+        except Exception as e:
+            print(f"  fetch err: {e}", file=sys.stderr)
+        time.sleep(3)
+    return False
+
+
+def _audio_url_from_download_text(base: str, body: str) -> str | None:
+    """Derive the audio URL from a download_song response, using ``base``.
+
+    The server reports either ``Downloaded to: /downloads/<short>.mp3`` or
+    ``Stream URL: <SUNO_PUBLIC_URL>/audio/<short>.mp3`` — we ignore the
+    embedded host (cross-tailnet agents can't reach it) and rebuild the
+    URL against the agent's configured ``SUNO_MCP_URL`` base, mirroring
+    how the same Worker bridge serves both ``/mcp`` and ``/audio/*``.
+    """
+    m = _FILENAME_RE.search(body)
+    if m:
+        return f"{base}/audio/{m.group(1)}"
+    m2 = _STREAM_RE.search(body)
+    if m2:
+        # Replace the host part but keep the filename.
+        fname = m2.group(1).rsplit("/", 1)[-1]
+        return f"{base}/audio/{fname}"
+    return None
+
+
+def generate_song(lyrics: str, tags: str, title: str, *,
+                  instrumental: bool = False,
+                  negative_prompt: str = "",
+                  base_url: str | None = None,
+                  output_dir: str | os.PathLike | None = None,
+                  timeout: int = 400) -> dict[str, Any]:
+    """Generate a song via the Suno MCP server and download both variants.
+
+    Returns a dict with at least ``all_ids``, ``local_files``,
+    ``local_file`` (alias of ``local_files[0]``), and ``result`` (the
+    raw text response from ``generate_song``).
+    """
+    base = (base_url or os.environ.get("SUNO_MCP_URL") or DEFAULT_BASE).rstrip("/")
+    out_path = Path(output_dir or os.environ.get("SUNO_OUTPUT_DIR") or DEFAULT_OUTPUT_DIR)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    client = MCPClient(base)
+    client.initialize()
+
+    args = _build_generate_args(lyrics, tags, title,
+                                instrumental=instrumental,
+                                negative_prompt=negative_prompt)
+
+    print(f"Generating song: {title} (base={base})...", file=sys.stderr)
+
+    # Retry on transient upstream / suno-side failures. Both HTTP errors
+    # and zero-status responses that contain a known retryable marker.
+    last_err = ""
+    text = ""
+    for attempt in range(1, 6):
+        try:
+            result = client.call_tool("generate_song", args, timeout=timeout)
+            text = _text_from_result(result)
+        except RuntimeError as e:
+            last_err = str(e)
+            transient = any(s in last_err for s in (
+                "HTTP 50", "HTTP 429", "timed out", "timeout",
+                "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN",
             ))
             if not transient:
+                raise
+            text = ""
+        else:
+            retryable = any(s in text for s in _RETRYABLE_PATTERNS)
+            has_id = bool(_ID_RE.search(text))
+            if has_id and not retryable:
                 break
+            if not retryable:
+                # No IDs and no known-retryable marker — bail.
+                break
+            last_err = text
 
-        backoff = min(60, 5 * (2 ** (attempt - 1)))  # 5, 10, 20, 40, 60s
+        backoff = min(60, 5 * (2 ** (attempt - 1)))
         print(f"Suno transient issue (attempt {attempt}/5); retrying in {backoff}s",
               file=sys.stderr)
         time.sleep(backoff)
 
-    if result.returncode != 0:
-        raise RuntimeError(f"Generation failed: {last_err}")
-    
-    # Parse response. Suno MCP now returns plain text like:
-    #   Song generation started!
-    #   ID: <uuid>
-    #   Preview: https://suno.com/song/<uuid>
-    #   Download: https://cdn1.suno.ai/<uuid>.mp3
-    # Handle both the legacy JSON form and the new plain-text form.
-    response: dict
-    try:
-        response = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        # Try line-by-line JSON first (legacy)
-        response = None
-        for line in result.stdout.strip().split('\n'):
-            try:
-                response = json.loads(line); break
-            except json.JSONDecodeError:
-                continue
-        if response is None:
-            # Plain-text fallback: extract IDs + direct CDN download URLs.
-            id_matches = re.findall(r'ID:\s*([a-f0-9-]+)', result.stdout)
-            dl_matches = re.findall(r'Download:\s*(https?://\S+)', result.stdout)
-            if not id_matches:
-                raise RuntimeError(f"Could not parse response: {result.stdout}")
-            response = {
-                'result': result.stdout,
-                'id': id_matches[0],
-                'all_ids': id_matches,
-                'download_url': dl_matches[0] if dl_matches else None,
-                'all_download_urls': dl_matches,
-            }
+    all_ids = _ID_RE.findall(text)
+    all_urls = _DL_RE.findall(text)
+    if not all_ids:
+        raise RuntimeError(f"No song IDs in response: {text or last_err}")
 
-    # Extract song_id(s) from response. Suno always returns 2 variants; if the
-    # upstream JSON branch didn't populate all_ids/all_download_urls, scrape them
-    # out of the 'result' text.
-    song_id = response.get('id') or response.get('song_id')
-    result_text = response.get('result', '') if isinstance(response.get('result'), str) else ''
-    if 'all_ids' not in response and result_text:
-        ids = re.findall(r'ID:\s*([a-f0-9-]+)', result_text)
-        if ids:
-            response['all_ids'] = ids
-            if not song_id:
-                song_id = ids[0]
-    if 'all_download_urls' not in response and result_text:
-        urls = re.findall(r'Download:\s*(https?://\S+)', result_text)
-        if urls:
-            response['all_download_urls'] = urls
+    response: dict[str, Any] = {
+        "result": text,
+        "id": all_ids[0],
+        "all_ids": all_ids,
+        "download_url": all_urls[0] if all_urls else None,
+        "all_download_urls": all_urls,
+    }
 
-    if not song_id:
-        raise RuntimeError(f"No song_id in response: {response}")
-
-    # Direct CDN URL is kept only as a fallback — we prefer the tailscale-proxied
-    # MCP download_song URL below, which is stable and doesn't 403 flakily.
-    direct_url = response.get('download_url')
-    if not direct_url and 'result' in response:
-        dm = re.search(r'Download:\s*(https?://\S+)', response['result'])
-        if dm:
-            direct_url = dm.group(1)
-
-    # Suno always returns 2 variants. Download both if we got both IDs; the
-    # primary ('local_file') is still the first one for backward compatibility,
-    # and a 'local_files' list carries all downloaded variants.
-    all_urls = response.get('all_download_urls') or ([direct_url] if direct_url else [])
-    all_ids  = response.get('all_ids') or [song_id]
+    # Download each variant. Preference order:
+    #   1. The MCP `download_song` proxy URL (`<base>/audio/<short>.mp3`)
+    #      — stable, served by the same Worker that fronts /mcp.
+    #   2. The direct CDN URL from the `generate_song` text response
+    #      (cdn1.suno.ai/<uuid>.mp3) — works when reachable.
     local_files: list[str] = []
-
-    def _fetch(url: str, dest: Path, tries: int, per_try_timeout: int = 30) -> bool:
-        for _ in range(tries):
-            try:
-                req = urllib.request.Request(url, headers={
-                    'User-Agent': 'Mozilla/5.0 (compatible; OpenClaw/1.0)'
-                })
-                with urllib.request.urlopen(req, timeout=per_try_timeout) as r:
-                    if r.status == 200:
-                        dest.write_bytes(r.read())
-                        return True
-            except urllib.error.HTTPError as e:
-                if e.code not in (403, 404):
-                    print(f"  HTTP {e.code} on {url}", file=sys.stderr)
-            except Exception as e:
-                print(f"  fetch err: {e}", file=sys.stderr)
-            time.sleep(3)
-        return False
-
-    def _mcp_tailscale_url(vid: str) -> str | None:
-        """Trigger MCP download_song and return the tailscale-reachable URL.
-
-        The server returns a `Stream URL: <SUNO_PUBLIC_URL>/audio/<short>.mp3`
-        line. We can't trust that URL verbatim (cross-tailnet agents can't
-        reach it); instead we extract just the filename and reattach it to
-        the agent's own MCP base URL — that way the same agent code works
-        whether mcporter points at https://suno-mcp.tail9683c.ts.net/mcp
-        or at a bridge URL like https://comfyui-bridge.tail74c072.ts.net:8190/mcp.
-        """
-        print(f"  Triggering MCP download for {vid}...", file=sys.stderr)
-        dr = subprocess.run(
-            ["npx", "mcporter", "call", "suno.download_song",
-             f"song_id={vid}", "--config", config, "--timeout", "300000"],
-            capture_output=True, text=True, cwd=os.path.expanduser("~"), timeout=300,
-        )
-        body = (dr.stdout or "") + (dr.stderr or "")
-        # Parse `Downloaded to: /downloads/<filename>` to get the canonical
-        # filename (e.g. "ef0722ad.mp3"), then build the audio URL from the
-        # mcporter-configured suno base URL.
-        m = re.search(r'Downloaded to:\s*\S*?([0-9a-f]{8}\.mp3)', body)
-        if not m:
-            # Fall back to the legacy `Stream URL:` / `Local URL:` shapes for
-            # older suno-mcp builds. If neither matches, give up and let the
-            # outer code fall back to the direct CDN URL.
-            m2 = re.search(r'(?:Stream|Local) URL:\s*(\S+/audio/[0-9a-f]{8}\.mp3)', body)
-            if not m2:
-                print(f"  MCP call returned no Stream URL (rc={dr.returncode})", file=sys.stderr)
-                return None
-            print(f"  MCP URL: {m2.group(1)}", file=sys.stderr)
-            return m2.group(1)
-        filename = m.group(1)
-        base = _suno_mcp_base_url(config)
-        url = f"{base}/audio/{filename}" if base else None
-        if url:
-            print(f"  MCP URL: {url}", file=sys.stderr)
-        else:
-            print(f"  Could not derive base URL from mcporter config", file=sys.stderr)
-        return url
-
     for i, vid in enumerate(all_ids):
-        out = output_dir / f"suno_{vid}.mp3"
+        out = out_path / f"suno_{vid}.mp3"
         direct = all_urls[i] if i < len(all_urls) else None
         print(f"Variant {i+1}/{len(all_ids)}: id={vid}", file=sys.stderr)
 
-        # Prefer tailscale-proxied MCP URL (stable, no 403 flakiness).
-        mcp_url = _mcp_tailscale_url(vid)
         ok = False
-        if mcp_url:
-            ok = _fetch(mcp_url, out, tries=40)
-            if not ok:
-                print(f"  MCP URL didn't yield file; falling back to direct CDN", file=sys.stderr)
+        try:
+            dl_result = client.call_tool("download_song", {"song_id": vid}, timeout=300)
+            dl_text = _text_from_result(dl_result)
+            audio_url = _audio_url_from_download_text(base, dl_text)
+            if audio_url:
+                print(f"  MCP URL: {audio_url}", file=sys.stderr)
+                ok = _fetch(audio_url, out, tries=40)
+                if not ok:
+                    print(f"  MCP URL didn't yield file; falling back to direct CDN", file=sys.stderr)
+            else:
+                print(f"  download_song returned no Stream URL", file=sys.stderr)
+        except RuntimeError as e:
+            print(f"  download_song MCP call failed: {e}", file=sys.stderr)
+
         if not ok and direct:
             print(f"  Direct: {direct}", file=sys.stderr)
             ok = _fetch(direct, out, tries=40)
@@ -254,33 +339,75 @@ def generate_song(lyrics, tags, title, instrumental=False, timeout=120):
         print(f"  Downloaded: {out.stat().st_size} bytes to {out}", file=sys.stderr)
         local_files.append(str(out))
 
-    response['local_file'] = local_files[0]   # primary (backward compat)
-    response['local_files'] = local_files     # all variants in order
+    response["local_file"] = local_files[0]
+    response["local_files"] = local_files
     return response
 
 
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Generate a song with Suno MCP")
+def _print_dry_run(args, base: str) -> None:
+    """Print the JSON-RPC body we'd send, without contacting the server."""
+    gen_args = _build_generate_args(
+        args.lyrics or "", args.tags, args.title,
+        instrumental=args.instrumental,
+        negative_prompt=args.negative_prompt or "",
+    )
+    body = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "generate_song", "arguments": gen_args},
+    }
+    print(json.dumps({
+        "endpoint": f"{base}/mcp",
+        "headers": {
+            "content-type": "application/json",
+            "accept": "application/json, text/event-stream",
+        },
+        "body": body,
+        "output_dir": str(Path(args.output_dir or os.environ.get("SUNO_OUTPUT_DIR") or DEFAULT_OUTPUT_DIR)),
+    }, indent=2))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Generate a song with Suno MCP and download both variants.")
     parser.add_argument("--lyrics", "-l", help="Song lyrics")
-    parser.add_argument("--tags", "-t", required=True, help="Genre/style tags")
+    parser.add_argument("--tags", "-t", required=True, help="Genre/style prompt (producer brief)")
     parser.add_argument("--title", "-T", required=True, help="Song title")
-    parser.add_argument("--instrumental", "-i", action="store_true", help="Instrumental track")
+    parser.add_argument("--instrumental", "-i", action="store_true",
+                        help="Instrumental track (no vocals)")
+    parser.add_argument("--negative-prompt", "-n", default="",
+                        help="Styles to avoid, e.g. 'heavy metal, screaming'")
+    parser.add_argument("--url", help="Override SUNO_MCP_URL env var")
+    parser.add_argument("--output-dir", help="Override SUNO_OUTPUT_DIR env var")
     parser.add_argument("--timeout", type=int, default=400,
-                        help="Total timeout in seconds (default 400 — full pipeline is 3-5 min)")
-    
+                        help="Total timeout in seconds (default 400 — pipeline is 3-5 min)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print the MCP request body and exit without calling the server")
+
     args = parser.parse_args()
-    
+    base = (args.url or os.environ.get("SUNO_MCP_URL") or DEFAULT_BASE).rstrip("/")
+
+    if args.dry_run:
+        _print_dry_run(args, base)
+        return
+
     try:
         result = generate_song(
             lyrics=args.lyrics or "",
             tags=args.tags,
             title=args.title,
             instrumental=args.instrumental,
-            timeout=args.timeout
+            negative_prompt=args.negative_prompt or "",
+            base_url=base,
+            output_dir=args.output_dir,
+            timeout=args.timeout,
         )
         print(json.dumps(result, indent=2))
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
