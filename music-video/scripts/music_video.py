@@ -297,14 +297,30 @@ def _ensure_dirs(project: Path) -> None:
 
 
 def _video_spec(spec: dict) -> dict:
-    v = spec.get("video", {})
+    """Return spec.video coerced into a renderer-friendly shape.
+
+    Historically this returned ONLY fps/width/height/negative/tail_buffer_sec
+    and silently dropped every other key from spec.video. That meant
+    every video-level field added since (lipsync_audio, hdr_lora,
+    base_guide_strength, refine_guide_strength, fast, transitions, ...)
+    looked correct in the spec but never actually reached the renderer
+    when read via `vs.get(...)` — a long-standing silent bug.
+
+    Now we pass through every key from spec.video and just OVERLAY the
+    five canonical fields with coerced types on top, so existing
+    `vs["fps"]` / `vs["width"]` etc. still get the int/float guarantees
+    they relied on, and any new field is also reachable via
+    `vs.get("lipsync_audio")` / `vs.get("hdr_lora")` etc. without
+    refactoring callers.
+    """
+    v = dict(spec.get("video") or {})
     w, h = (v.get("resolution") or [1024, 576])
-    return {
-        "fps": int(v.get("fps", 24)),
-        "width": int(w), "height": int(h),
-        "negative": v.get("negative"),
-        "tail_buffer_sec": float(v.get("tail_buffer_sec", 0.0) or 0.0),
-    }
+    v["fps"] = int(v.get("fps", 24))
+    v["width"] = int(w)
+    v["height"] = int(h)
+    v["negative"] = v.get("negative")
+    v["tail_buffer_sec"] = float(v.get("tail_buffer_sec", 0.0) or 0.0)
+    return v
 
 
 # ---------- subcommands ----------
@@ -324,10 +340,23 @@ MAX_SCENE_DURATION = 15.0
 # in prompts don't break. Applied to every scene.prompt and anchor.prompt.
 def _expand_subjects(text: str, spec: dict) -> str:
     subjects = spec.get("subjects") or {}
-    if not subjects or not isinstance(text, str):
+    if not isinstance(text, str):
         return text
     for name, desc in subjects.items():
         text = text.replace("{" + str(name) + "}", str(desc))
+    # Defensive: warn on any leftover {token} that wasn't substituted. Common
+    # cause: spec author wrote `{narrator}` in scene prompts but forgot the
+    # top-level `subjects:` block, so the literal `{narrator}` string was
+    # being shipped to flux2 / LTX. Models tolerate it (CLIP treats it as
+    # noise) but the prompt is silently degraded.
+    import re
+    leftover = re.findall(r"\{([a-zA-Z][a-zA-Z0-9_-]*)\}", text)
+    if leftover:
+        unique = sorted(set(leftover))
+        print(f"[WARN] unresolved subject token(s) in prompt: "
+              f"{', '.join('{' + n + '}' for n in unique)} — "
+              f"add a top-level `subjects:` block to your spec",
+              file=sys.stderr)
     return text
 
 
@@ -760,8 +789,22 @@ def cmd_anchors(spec: dict, project: Path) -> None:
 
 
 def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str | None:
-    """Resolve `image: @none | @anchor | @last | path`. Returns absolute path
-    string, or None if @none (force t2v), or @last at idx=1 with no anchor → t2v."""
+    """Resolve image-token references → absolute path string (or None for t2v).
+    Token vocabulary:
+      @none           → no image conditioning (forces t2v)
+      @last           → previous scene's last frame (chained continuity)
+      @anchor         → top-level spec.anchor_image
+      @scene_anchor   → THIS scene's flux2-rendered anchor PNG. Use this in
+                        guides[].image when you want a multi-guide shot to
+                        bias toward the scene's own composition (smudged
+                        eyeliner, jacket, lighting) rather than the raw
+                        character sheet anchors/narrator.png. Without this,
+                        the model sees only the character's STUDIO portrait
+                        + the establishing corridor and falls back to a
+                        clean studio aesthetic that ignores the scene's
+                        per-shot styling.
+      <path>          → literal relative-to-project or absolute path
+    Returns None for @none, or for @last at idx=1 with no anchor_image."""
     if ref == "@none":
         return None  # explicit t2v — no image conditioning, no audio slice
     if not ref or ref == "@last":
@@ -782,6 +825,14 @@ def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str 
         if not anchor:
             sys.exit(f"scene {idx}: @anchor requested but spec.anchor_image missing")
         return str((project / anchor).resolve())
+    if ref == "@scene_anchor":
+        scene = spec["scenes"][idx - 1]
+        stem = _scene_stem(idx, scene.get("label", "scene"))
+        scene_anchor = project / "scenes" / f"{stem}-anchor.png"
+        if not scene_anchor.exists():
+            sys.exit(f"scene {idx}: @scene_anchor requested but {scene_anchor} "
+                     f"does not exist (run anchors phase first)")
+        return str(scene_anchor)
     # Literal path (relative to project dir if not absolute)
     p = Path(ref)
     return str(p if p.is_absolute() else (project / p).resolve())
@@ -901,6 +952,48 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     if scene.get("fast") or (spec.get("video") or {}).get("fast"):
         common += ["--fast"]
 
+    # Optional HDR (or other) IC-LoRA stack — sourced from video.hdr_lora
+    # (project-wide) or scene.hdr_lora (per-scene override). Either is a dict:
+    #   {file: <safetensors>, strength: 1.0, reference: <png path>,
+    #    reference_strength: 1.0, scene_emb: <safetensors> (optional),
+    #    scene_emb_strength: 1.0}
+    # or null/missing to disable. The reference image is mandatory when an
+    # IC-LoRA is set — the LoRA weights only act in concert with the
+    # ImagePrepForICLora + LTXAddVideoICLoRAGuide chain that consumes the
+    # reference. Without it the LoRA stacks have no visible effect.
+    hdr_cfg = scene.get("hdr_lora") if "hdr_lora" in scene else vs.get("hdr_lora")
+    if hdr_cfg:
+        ic_pairs: list[str] = []
+        ic_pairs.append(f"{hdr_cfg['file']}:{float(hdr_cfg.get('strength', 1.0)):.2f}")
+        if hdr_cfg.get("scene_emb"):
+            ic_pairs.append(
+                f"{hdr_cfg['scene_emb']}:{float(hdr_cfg.get('scene_emb_strength', 1.0)):.2f}")
+        ref = hdr_cfg.get("reference")
+        ref_video = hdr_cfg.get("reference_video")
+        # Static-image reference (HDR-style frame-0 bias): use --ic_lora_reference.
+        # Video reference (depth/canny/motion-track per-frame conditioning):
+        # use --ic_lora_reference_video. Pass either one. The video form
+        # bypasses ImagePrepForICLora server-side and uses ResizeImageMaskNode
+        # 'scale to multiple' instead — that's what the official Lightricks
+        # workflow does and it's what gives full-frame coverage on portrait
+        # outputs (vs the ImagePrepForICLora left-bias bug we hit on the
+        # square-prep path).
+        if not ref and not ref_video:
+            sys.exit("video.hdr_lora needs `reference` (image) OR `reference_video` (mp4)")
+        common += ["--ic_loras", ",".join(ic_pairs),
+                   "--ic_lora_reference_strength",
+                   str(float(hdr_cfg.get("reference_strength", 1.0)))]
+        if ref_video:
+            rv_path = (project / ref_video).resolve() if not Path(ref_video).is_absolute() else Path(ref_video)
+            if not rv_path.exists():
+                sys.exit(f"video.hdr_lora.reference_video points at {rv_path} which does not exist")
+            common += ["--ic_lora_reference_video", str(rv_path)]
+        else:
+            ref_path = (project / ref).resolve() if not Path(ref).is_absolute() else Path(ref)
+            if not ref_path.exists():
+                sys.exit(f"video.hdr_lora.reference points at {ref_path} which does not exist")
+            common += ["--ic_lora_reference", str(ref_path)]
+
     # guides: optional yaml list of additional keyframe guides at specified
     # positions within the shot. When present, route to `multiguide`
     # (chained LTXVAddGuides) instead of plain ia2v — the first-frame
@@ -927,13 +1020,17 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         spec_gm = importlib.util.spec_from_file_location("storyboard_guides", sb_lib)
         gm = importlib.util.module_from_spec(spec_gm); spec_gm.loader.exec_module(gm)
 
-        # Resolve at_sec / at_relative / at_frame for each guide entry.
+        # Resolve at_sec / at_relative / at_frame / at_song_sec for each
+        # guide entry. scene_start_sec lets specs use song-absolute time
+        # (e.g. drum hit at 73.14s) without subtracting the scene's start
+        # by hand — handy when the guide list is authored from MIDI markers.
         resolved = gm.resolve_guides(
             guides_yaml,
             duration_sec=float(effective_duration),
             fps=int(vs["fps"]),
             project_dir=project,
             token_resolver=lambda tok: _resolve_image(spec, project, idx, tok),
+            scene_start_sec=float(scene.get("start_sec", 0.0)),
         )
         # Prepend frame-0 anchor if caller didn't put one there — the
         # shot's `image:` (already resolved to image_path) fills that slot.
@@ -1160,6 +1257,19 @@ def cmd_transitions(spec: dict, project: Path) -> None:
                "--mask_start_sec", "1.0",
                "--mask_end_sec", "4.0",
                "--timeout", "1800"]
+        # Inherit fast/slow mode from the same knob the scene renders use.
+        # Without this transitions silently render full 2-pass (LTXVLatentUpsampler
+        # + 3-step refine) while scenes ran fast=true single-pass — they take
+        # 2× the wall time of a fast scene and the quality mismatch shows up
+        # as a visible sharpness pop at every transition.
+        # Per-boundary override: video.transitions.fast (true|false) trumps
+        # video.fast for transitions only — useful if you want fast scene
+        # iteration but final-quality morph clips, or vice versa.
+        trans_fast = tv.get("fast")
+        if trans_fast is None:
+            trans_fast = bool(vs.get("fast"))
+        if trans_fast:
+            cmd += ["--fast"]
         _log(project, f"transition {a_idx}→{b_idx}: {dur}s "
                       f"({guide_sec}s A-guide + {empty_end_sec - empty_start_sec}s empty + "
                       f"{guide_sec}s B-guide), audio from {slice_start:.2f}s")
@@ -1215,6 +1325,28 @@ def cmd_assemble(spec: dict, project: Path) -> None:
         dur_out = _transition_duration(spec, i)      if trans_enabled and i < n else 0.0
         skip_front = dur_in / 2.0
         keep = float(s["duration_sec"]) - dur_in / 2.0 - dur_out / 2.0
+        # Guard: if a scene is shorter than its flanking transitions consume,
+        # `keep` goes negative and ffmpeg refuses the trim. Rather than crash
+        # on the whole assemble, shrink each transition proportionally so the
+        # scene retains at least MIN_NATIVE_KEEP of native content. Whichever
+        # transition gets clamped here will look slightly out-of-sync with
+        # its rendered duration but the alternative is a crashed assemble.
+        MIN_NATIVE_KEEP = 0.25
+        if keep < MIN_NATIVE_KEEP:
+            shortfall = (MIN_NATIVE_KEEP - keep)
+            # Each transition gives up half the shortfall, capped at its own
+            # current half-share so we don't go negative on dur_*.
+            give_in = min(dur_in / 2.0, shortfall / 2.0)
+            give_out = min(dur_out / 2.0, shortfall - give_in)
+            dur_in = max(0.0, dur_in - 2.0 * give_in)
+            dur_out = max(0.0, dur_out - 2.0 * give_out)
+            skip_front = dur_in / 2.0
+            keep = float(s["duration_sec"]) - dur_in / 2.0 - dur_out / 2.0
+            keep = max(MIN_NATIVE_KEEP, keep)
+            print(f"[WARN] scene {i} '{s.get('label')}' shorter than its transitions "
+                  f"({s['duration_sec']:.2f}s vs {dur_in/2.0+dur_out/2.0:.2f}s consumed); "
+                  f"shrunk to dur_in={dur_in:.2f}/dur_out={dur_out:.2f}, keep={keep:.2f}",
+                  file=sys.stderr)
 
         clip_paths.append(p)
         starts.append(skip_front)

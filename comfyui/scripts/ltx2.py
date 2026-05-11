@@ -230,17 +230,41 @@ def _empty_audio_latent(g, length, fps, audio_vae):
                   batch_size=1, audio_vae=audio_vae[0])
 
 
-def _base_video_latent(g, width, height, length, vae, image_ref, strength=0.7):
+def _base_video_latent(g, width, height, length, vae, image_ref, strength=0.7,
+                        condition_only=False):
     """Empty video latent, optionally conditioned on a single reference image
-    (or a multi-frame IMAGE batch) via LTXVImgToVideoInplace. Lower strength
-    means the refs act as a soft identity prior instead of a locked first
-    frame — use ~0.4-0.6 for lipsync where the character should be free to
-    move, dance, and act rather than statically singing into the camera."""
+    (or a multi-frame IMAGE batch). Two anchor-conditioning modes:
+
+      condition_only=False  (default for plain ia2v):
+          LTXVImgToVideoInplace bakes the anchor INTO the initial latent state.
+          The sampler then refines from this partially-filled latent. Strong
+          first-frame fidelity but it COMPETES SPATIALLY with any downstream
+          LTXAddVideoICLoRAGuide conditioning — both want to drive the latent
+          and the IC-LoRA tends to win the left half / lose the right half,
+          producing a visible left-biased output. Don't use this with IC-LoRA.
+
+      condition_only=True   (use when LTXAddVideoICLoRAGuide is active):
+          LTXVImgToVideoConditionOnly attaches the anchor as a side-channel
+          condition WITHOUT modifying the latent. The latent stays empty
+          (full noise), and the conditioning chain (anchor + IC-LoRA video)
+          jointly drives generation through positive/negative pairs. This
+          matches the official Lightricks LTX-2.3 IC-LoRA Union-Control
+          workflow shape and produces full-frame coverage instead of the
+          left-half output we got with Inplace + IC-LoRA combined.
+
+    Lower strength means the refs act as a soft identity prior instead of a
+    locked first frame — use ~0.4-0.6 for lipsync where the character should
+    move freely.
+    """
     empty = g.node("EmptyLTXVLatentVideo",
                    width=int(width), height=int(height),
                    length=int(length), batch_size=1)
     if image_ref is None:
         return empty
+    if condition_only:
+        return g.node("LTXVImgToVideoConditionOnly",
+                       vae=vae, image=image_ref[0], latent=empty[0],
+                       strength=float(strength))
     bypass = g.node("PrimitiveBoolean", value=False)
     return g.node("LTXVImgToVideoInplace",
                   vae=vae, image=image_ref[0], latent=empty[0],
@@ -431,17 +455,127 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
            base_guide_strength=0.7, refine_guide_strength=0.3,
            identity_anchor_image=None, identity_strength=0.3,
            source_audio_filename=None,
+           ic_loras=None,
+           ic_lora_reference_filename=None,
+           ic_lora_reference_strength=1.0,
+           ic_lora_reference_size=None,
            ckpt=CKPT, text_encoder=TEXT_ENCODER):
+    """
+    ic_loras: optional list of (lora_name, strength) tuples. Each is loaded
+        via Lightricks' LTXICLoRALoaderModelOnly node which is required for
+        IC-LoRA weights (e.g. ltx-2.3-22b-ic-lora-hdr-0.9.safetensors); the
+        regular LoraLoaderModelOnly does not extract the latent_downscale_factor
+        these LoRAs need. Stack multiple in order — typically one main IC-LoRA
+        + one scene-emb companion.
+    ic_lora_reference_filename: REQUIRED when ic_loras is set. The IC-LoRA
+        only acts when paired with a reference image fed through the
+        ImagePrepForICLora + LTXAddVideoICLoRAGuide chain. The IC-LoRA
+        weights without the conditioning image have no visible effect.
+    ic_lora_reference_strength: strength on the LTXAddVideoICLoRAGuide
+        node — how strongly the IC-LoRA reference biases the latent.
+    ic_lora_reference_size: ImagePrepForICLora target size (square).
+    """
     g = WorkflowGraph()
     checkpoint, clip, audio_vae, upscaler = _loaders(g, ckpt, text_encoder)
     model = _distilled_lora(g, checkpoint[0])
     model = _apply_extra_lora(g, model, camera_lora, camera_lora_strength)
+    # IC-LoRAs (e.g. HDR, Union-Control) — applied AFTER distilled+camera so
+    # they sit closest to the sampler. Each IC-LoRA loader returns
+    # (model, latent_downscale_factor); we keep both — the model wires
+    # forward, and the LATEST latent_downscale_factor is required by
+    # LTXAddVideoICLoRAGuide downstream.
+    ic_lora_active = bool(ic_loras and ic_lora_reference_filename)
+    ic_loaded = None    # last LTXICLoRALoaderModelOnly node ref
+    if ic_loras:
+        for lora_name, lora_strength in ic_loras:
+            ic_load = g.node("LTXICLoRALoaderModelOnly",
+                              model=model[0],
+                              lora_name=lora_name,
+                              strength_model=float(lora_strength))
+            model = ic_load
+            ic_loaded = ic_load
     cond = _encode_prompts(g, clip[0], prompt, negative, fps)
 
     image_ref = image_ref_builder(g) if image_ref_builder else None
+    # When IC-LoRA is active, follow the official Lightricks workflow shape
+    # and use ConditionOnly anchor mode so the anchor doesn't bake into the
+    # latent state and fight the IC-LoRA conditioning for spatial coverage.
     video_latent = _base_video_latent(g, width, height, length,
                                       vae=checkpoint[2], image_ref=image_ref,
-                                      strength=base_guide_strength)
+                                      strength=base_guide_strength,
+                                      condition_only=ic_lora_active)
+
+    # IC-LoRA reference image conditioning. Loads the reference, preps it
+    # to a square tile via ImagePrepForICLora (the node centers + pads, no
+    # crop), then injects it via LTXAddVideoICLoRAGuide which adds an
+    # IC-LoRA-specific conditioning branch on top of the existing
+    # positive/negative tuple. Frame_idx=0 makes it a first-frame style
+    # bias (HDR envelope, lighting palette); use frame_idx=-1 or middle
+    # for late-shot biases. Returns (positive, negative, latent).
+    if ic_lora_active:
+        # Reference can be a single image (LoadImage) or a video frame batch
+        # (LoadVideo → GetVideoComponents). The video path is what makes
+        # depth-control / canny-control / motion-track-control IC-LoRAs
+        # actually conditioning-per-frame instead of a static bias —
+        # use ic_lora_reference_filename ending in .mp4/.mov to trigger.
+        is_video_ref = bool(ic_lora_reference_filename and
+                            str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
+                            in ("mp4", "mov", "webm", "mkv"))
+        if is_video_ref:
+            # Match the official Lightricks LTX-2.3 IC-LoRA Union-Control
+            # workflow: LoadVideo → GetVideoComponents[image] →
+            # ResizeImageMaskNode 'scale to multiple' (32) → LTXAddVideoICLoRAGuide.image.
+            # Skip ImagePrepForICLora entirely — that node distorts non-
+            # square inputs and was the root cause of the left-bias bug
+            # we chased through three iterations of size-tweaks.
+            # Caller is expected to render the conditioning video at
+            # exactly the output W×H dims (which are already ÷32-aligned),
+            # so the resize step is effectively a no-op but kept for
+            # safety against off-by-padding inputs.
+            ic_load = g.node("LoadVideo", file=ic_lora_reference_filename)
+            ic_components = g.node("GetVideoComponents", video=ic_load[0])
+            ic_ref_prep = g.node("ResizeImageMaskNode", **{
+                "input": ic_components[0],
+                "resize_type": "scale to multiple",
+                "resize_type.multiple": 32,
+                "scale_method": "lanczos",
+            })
+        else:
+            # Single-image reference (HDR-style static bias). Keep the
+            # ImagePrepForICLora path here — square-padded 1024×1024 input
+            # is what HDR was trained on, and the bias issue only manifests
+            # for video-batch conditioning under Union-Control.
+            ic_load = g.node("LoadImage", image=ic_lora_reference_filename)
+            if ic_lora_reference_size is None:
+                prep_w, prep_h = int(width), int(height)
+            else:
+                prep_w = prep_h = int(ic_lora_reference_size)
+            ic_ref_prep = g.node("ImagePrepForICLora",
+                                  reference_image=ic_load[0],
+                                  output_width=prep_w,
+                                  output_height=prep_h,
+                                  border_width=0)
+        # latent_downscale_factor: source it from LTXICLoRALoaderModelOnly's
+        # slot 1 — the LoRA's metadata-embedded factor (2.0 for Union-Control,
+        # 1.0 for HDR). The official workflow's wired pattern. Earlier we
+        # tried hardcoding 1.0 to fix the left-bias bug — that didn't help;
+        # the actual fix was switching ImagePrepForICLora → ResizeImageMaskNode
+        # for video references (above).
+        ic_guide = g.node("LTXAddVideoICLoRAGuide",
+                           positive=cond[0], negative=cond[1],
+                           vae=checkpoint[2], latent=video_latent[0],
+                           image=ic_ref_prep[0],
+                           frame_idx=0,
+                           strength=float(ic_lora_reference_strength),
+                           latent_downscale_factor=ic_loaded[1],
+                           crop="disabled",
+                           use_tiled_encode=False,
+                           tile_size=256,
+                           tile_overlap=64)
+        # Re-bind cond + video_latent so downstream uses the IC-LoRA-conditioned
+        # variants. ic_guide outputs are (positive, negative, latent).
+        cond = (ic_guide[0], ic_guide[1])
+        video_latent = (ic_guide[2],)
 
     # Optional identity anchor — injects the character reference at a
     # MIDDLE frame (not frame_idx=-1, which would make this a flf2v-style
@@ -481,13 +615,30 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
     av_pass1 = _pass_one(g, model, cond_for_sampling, av_latent, seed=base_seed)
     source_audio_seconds = float(length) / float(fps) if source_audio_filename else None
 
+    # `strip_guides_cond` triggers an LTXVCropGuides pass before decode. We
+    # need it whenever any LTXVAddGuide / LTXAddVideoICLoRAGuide added
+    # conditioning frames to the latent — those frames stay in the output
+    # otherwise and the rendered video runs ~2× the requested seconds with
+    # latent-noise tail (the "the video is 13s long with noise" bug).
+    # Trigger on either id_branch (LTXVAddGuide) OR ic_lora_active
+    # (LTXAddVideoICLoRAGuide).
+    needs_crop = id_branch is not None or ic_lora_active
     if fast:
         _decode_and_save(g, av_pass1, vae=checkpoint[2], audio_vae=audio_vae,
                          fps=fps, filename_prefix=filename_prefix,
-                         strip_guides_cond=(cond_for_sampling if id_branch else None),
+                         strip_guides_cond=(cond_for_sampling if needs_crop else None),
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     else:
+        # ┌─ 2-PASS IC-LoRA TODO ─────────────────────────────────────────┐
+        # │ When ic_lora_active AND fast=False, we should ALSO re-apply  │
+        # │ LTXAddVideoICLoRAGuide on the upsampled pass-2 latent —      │
+        # │ same pattern as id_branch below. Without it, the IC-LoRA's   │
+        # │ conditioning is dropped through the refine step. See         │
+        # │ STRUCTURAL-FOLLOWUPS.md "2-pass IC-LoRA refine — open work"  │
+        # │ for the ~30-LOC fix sketch. Not yet implemented because all  │
+        # │ current renders are fast=True for iteration speed.           │
+        # └──────────────────────────────────────────────────────────────┘
         av_for_pass2, cropped_cond = _upsample_between(
             g, av_pass1, cond, vae=checkpoint[2], upscaler=upscaler,
             image_ref=image_ref,
@@ -512,7 +663,7 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                              seed=base_seed + 1)
         _decode_and_save(g, av_final, vae=checkpoint[2], audio_vae=audio_vae,
                          fps=fps, filename_prefix=filename_prefix,
-                         strip_guides_cond=(final_cond if id_branch else None),
+                         strip_guides_cond=(final_cond if needs_crop else None),
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     return g.to_dict()
@@ -564,6 +715,10 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
                                refine_guide_strength=0.3,
                                identity_anchor_image=None,
                                identity_strength=0.3,
+                               ic_loras=None,
+                               ic_lora_reference_filename=None,
+                               ic_lora_reference_strength=1.0,
+                               ic_lora_reference_size=None,
                                checkpoint_name=None, text_encoder=None,
                                **_):
     """Image+Audio → Video.
@@ -592,6 +747,10 @@ def ltx2_image_audio_to_video(image_filename, audio_filename, prompt,
                   identity_anchor_image=identity_anchor_image,
                   identity_strength=identity_strength,
                   source_audio_filename=audio_filename,
+                  ic_loras=ic_loras,
+                  ic_lora_reference_filename=ic_lora_reference_filename,
+                  ic_lora_reference_strength=ic_lora_reference_strength,
+                  ic_lora_reference_size=ic_lora_reference_size,
                   ckpt=checkpoint_name or CKPT,
                   text_encoder=text_encoder or TEXT_ENCODER)
 
