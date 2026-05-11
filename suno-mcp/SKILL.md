@@ -6,26 +6,71 @@ metadata:
     "openclaw":
       {
         "emoji": "🎵",
-        "requires": { "skills": ["mcporter"] },
+        "requires": { "skills": [] },
       },
   }
 ---
 
 # Suno MCP Skill
 
-Run: `python3 $(find /home /workspace -maxdepth 6 -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1) --lyrics='...' --tags='...' --title='...'` (timeout 400s)
+Direct Suno MCP server access for AI music generation. The scripts talk to the
+MCP server over plain JSON-RPC / HTTP (no `mcporter`, no `npx`) and download
+both song variants to a local directory.
 
-⚠️ `--tags` = full producer brief (NOT keywords). Read first: `cat <skill-dir>/references/style-guide.md`
+## Server URL configuration
+
+The scripts read two environment variables, with CLI overrides:
+
+| Var | Used by | Falls back to |
+|---|---|---|
+| `SUNO_MCP_URL`    | every command; `<base>/mcp` for JSON-RPC, `<base>/audio/<file>.mp3` for downloads | `http://localhost:8190` |
+| `SUNO_OUTPUT_DIR` | where generated MP3s land | `./outputs/suno` (relative to CWD) |
+
+CLI flags override env vars on every invocation: `--url URL` and `--output-dir DIR`.
+
+**Defaults**: a fresh clone with no env vars set assumes a Suno MCP server
+listening on `http://localhost:8190` — the conventional port for the
+`bootstrap/media-relay` Worker bridge that fronts Suno. The same bridge serves
+`/mcp` (control plane) and `/audio/<file>.mp3` (downloads), so one base URL
+covers both.
+
+**Per-tailnet examples** — what the operator actually uses:
+
+| agent location | `SUNO_MCP_URL` |
+|---|---|
+| `tail9683c` (operator's personal tailnet) | `https://suno-mcp.tail9683c.ts.net` |
+| `tail74c072` (`tag:overlord` sandboxes)   | `https://media-relay.tail74c072.ts.net:8190` |
+
+Future media-relays plug in cleanly by exposing the same `/mcp` + `/audio`
+surface on their own port; just point `SUNO_MCP_URL` at the new host.
+
+**OpenClaw sandbox**: agents in an agentic-media sandbox have `SUNO_MCP_URL`
+(and `SUNO_OUTPUT_DIR`) injected at boot via the per-sandbox `credentials.env`
+propagation; agent prompts and skill code don't need to mention them.
+
+## Script paths (use absolute; tilde expansion is unreliable under `exec`)
+
+Resolve the script once at the top of the agent run with `find`, then call it
+by absolute path. The skill works equally well from a host install, an
+OpenClaw sandbox checkout, or a fresh `git clone` — there is no canonical
+install path it relies on.
+
+```bash
+SCRIPT=$(find "$HOME" /home /workspace -maxdepth 7 \
+        -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
+python3 "$SCRIPT" --lyrics='...' --tags='...' --title='...'
+```
+
+⚠️ `--tags` = full producer brief (NOT keywords). Read first: `cat <skill-dir>/references/style-guide.md`.
 
 **Lyrics:** `[Verse]`/`[Chorus]`/`[Bridge]`/`[Instrumental]` tags — guide: `cat <skill-dir>/references/lyrics-guide.md`. Read it before drafting — it's the difference between AI-sounding lyrics and lyrics worth listening to.
 
 **🚨 Two variants per generation.** Suno *always* returns 2 takes from a single request. The helper script downloads BOTH (`local_files` is a list). Present both to the user and let them choose — agents that send only the first systematically lose half the value of every generation. The full output JSON has `local_files` (all variants) and `local_file` (variant 1, kept for backward compat).
 
-Generate AI music using Suno's API via the MCP server.
-
 ## Quick Start
 
-Use the Python helper script — it handles shell quoting safely for long lyrics and detailed style prompts. Direct `mcporter call` on the command line will fail with anything beyond short, simple values.
+Use the Python helper script — it handles shell quoting safely for long lyrics
+and detailed style prompts.
 
 ```python
 # 1. Locate the script (works on host install, sandbox install, or fresh clone).
@@ -204,24 +249,60 @@ The `tags` field is a **text-to-music prompt**, not a keyword list. Write it lik
 
 Suno always generates **two song variants** from a single request. Both are equally valid. The helper script downloads both — `local_files` is the canonical list, `local_file` is a legacy alias for the first variant. Default behaviour for any agent: send both with their Suno preview URLs so the user can pick (see Quick Start step 3).
 
+## CLI Reference
+
+### `generate_song.py` — primary entry point
+
+| Flag | Description |
+|------|-------------|
+| `--lyrics`, `-l`             | Full song text with section tags |
+| `--tags`, `-t` *(required)*  | Style prompt (producer brief; see above) |
+| `--title`, `-T` *(required)* | Song title |
+| `--instrumental`, `-i`       | Instrumental track (no vocals) |
+| `--negative-prompt`, `-n`    | Styles to avoid, e.g. `"heavy metal, screaming"` |
+| `--url`                      | Override `SUNO_MCP_URL` env var |
+| `--output-dir`               | Override `SUNO_OUTPUT_DIR` env var |
+| `--timeout`                  | Total timeout in seconds (default 400) |
+| `--dry-run`                  | Print constructed MCP request body, no API call |
+
+### `download_from_mcp.py` — re-download an existing song by ID
+
+| Flag | Description |
+|------|-------------|
+| `song_id` *(positional)*     | Suno song UUID |
+| `--url`                      | Override `SUNO_MCP_URL` env var |
+| `--output-dir`, `-o`         | Override `SUNO_OUTPUT_DIR` env var |
+| `--max-wait`, `-w`           | Max seconds to wait for file availability (default 120) |
+
+## Dry-run (no API call, no Suno credits)
+
+Pass `--dry-run` to print the constructed MCP request body and target endpoint
+without contacting the server. Use during development to verify quoting /
+argument shape:
+
+```bash
+python3 generate_song.py --dry-run \
+  --title 'Test Song' \
+  --tags 'trip-hop, 92 BPM' \
+  --lyrics '[Verse]\nHello world'
+```
+
 ## Troubleshooting
 
-- **Shell quoting errors**: Always use the Python script, not `mcporter call`, for anything with real lyrics or long style prompts.
-- **Login required**: Run `mcporter call suno.suno_login --config <mcporter-config>` first. The login persists in the saved Chrome profile.
+- **Connection refused / DNS error**: `SUNO_MCP_URL` is wrong or unreachable. Check the per-tailnet table above; from a sandbox, confirm `credentials.env` exported `SUNO_MCP_URL`.
+- **`HTTP 400 Bad Request: Missing session ID`**: the script's MCP client forgot to send `mcp-session-id` after `initialize`. This shouldn't happen in the bundled client — if you see it, the script is stale, re-import.
+- **Login required**: the Suno MCP server needs a one-time Google login via the `suno_login` MCP tool. Connect to the server's noVNC URL and complete the OAuth dance; the session persists in the saved Chrome profile.
 - **Wrong parameter name**: Use `lyrics`, not `prompt` (deprecated).
 - **Timeout**: The full pipeline takes 3–5 minutes; always set exec timeout ≥ 400 seconds.
-- **"No Stream URL" warning**: harmless — script falls back to the direct CDN URL.
+- **"No song IDs in response"**: the server returned a non-standard payload. Re-run; if it persists, call the `debug_browser` MCP tool to inspect page state.
 - **Only one variant in `local_files`**: bug. Both should always be present. Re-run.
+- **403 on direct CDN URL**: harmless — the script falls back to the MCP-proxied `<base>/audio/<file>.mp3` URL (and vice-versa).
 
-## MCP Config
+## Audio URL pattern
 
-The skill reads `~/.openclaw/config/mcporter.json` (or the path the host
-runtime configured for `mcporter`). The `suno` server URL is whichever
-endpoint the agent's tailnet can actually reach:
-
-| agent location | suno URL |
-|---|---|
-| `tail9683c` (operator's personal tailnet) | `https://suno-mcp.tail9683c.ts.net/mcp` |
-| `tail74c072` (`tag:overlord` sandboxes) | `https://comfyui-bridge.tail74c072.ts.net:8190/mcp` (via `bootstrap/media-relay`) |
-
-The script derives the audio download URL from this same base — `<base>/audio/<short-id>.mp3` — so the same code works on both tailnets without any agent-side host substitution.
+The audio URL is always `${SUNO_MCP_URL}/audio/<short>.mp3` — the same Worker
+bridge that fronts `/mcp` also serves the downloaded files, so there is no
+separate hostname or port to track. The script rebuilds this URL from
+`SUNO_MCP_URL` after every `download_song` call, ignoring any host embedded
+in the server's response (which is often the server's internal `0.0.0.0`
+binding and unreachable off-host).
