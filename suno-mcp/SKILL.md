@@ -81,37 +81,82 @@ agentic-media sandboxes because creative-skills are not mirrored under
 
 ## Quick Start
 
-Use the Python helper script — it handles shell quoting safely for long lyrics
-and detailed style prompts.
+**Two-step pattern: `write` tool for the spec, `exec` tool for the script.**
+Do NOT write a per-invocation wrapper python file. Do NOT shell-quote
+multiline lyrics into `--lyrics='...'`. Both are workarounds for
+shell-quoting that the `--input-json` flag eliminates entirely.
 
-```python
-# 1. Locate the script.
-#    Sandboxed agents: hard-code /agentic-media/creative-skills/suno-mcp/scripts/generate_song.py.
-#    Host / fresh clone: search /agentic-media first, then $HOME/home/workspace.
-SCRIPT=$(find /agentic-media "$HOME" /home /workspace -maxdepth 7 \
-        -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
+### Step 1 — write the song spec via the `write` tool
 
-# 2. Generate + auto-download BOTH variants (3–5 minutes, use 400s timeout)
-result = exec({
-    "command": f"python3 {SCRIPT} --lyrics='{lyrics}' --tags='{tags}' --title='{title}'",
-    "timeout": 400
-})
-# result is a JSON dict with at least:
-#   local_files: ["<path>/suno_<id1>.mp3", "<path>/suno_<id2>.mp3"]
-#   all_ids:     ["<id1>", "<id2>"]
-#   local_file:  <local_files[0]>   (legacy alias)
+The `write` tool doesn't go through shell parsing, so lyrics with
+quotes, backslashes, multiline `[Verse]` / `[Chorus]` blocks, or any
+UTF-8 are safe as-is. Target file: anywhere writable, e.g.
+`/workspace/.suno/<title-slug>.json`.
 
-# 3. Send BOTH to the user, not just the first.
-for i, path in enumerate(result["local_files"], start=1):
-    message({
-        "action": "send",
-        "channel": "discord",
-        "filePath": path,
-        "caption": f"🎵 Variant {i}/{len(result['local_files'])} — https://suno.com/song/{result['all_ids'][i-1]}",
-    })
+```jsonc
+{
+  "title":           "Neon Highways",
+  "lyrics":          "[Verse 1]\nDriving through the rain...\n[Chorus]\n...",
+  "tags":            "synthwave, 1980s production, gated reverb on snare, ...",
+  "negative_prompt": "",
+  // Optional:
+  // "instrumental": true,
+  // "output_dir":   "/workspace/media/outbound"
+}
 ```
 
-For instrumental tracks, pass `--instrumental` instead of `--lyrics`.
+### Step 2 — call generate_song.py via the `exec` tool
+
+Single argument, no shell quoting of user content, passes preflight cleanly:
+
+```bash
+python3 /agentic-media/creative-skills/suno-mcp/scripts/generate_song.py \
+  --input-json /workspace/.suno/neon-highways.json
+```
+
+Use a 400-second timeout — the pipeline is 3–5 minutes (Suno generation
+plus parallel download of both variants).
+
+### Step 3 — send BOTH variants
+
+The script's stdout is JSON with at least:
+
+```jsonc
+{
+  "local_files": ["<path>/suno_<id1>.mp3", "<path>/suno_<id2>.mp3"],
+  "all_ids":     ["<id1>", "<id2>"],
+  "local_file":  "<local_files[0]>"   // legacy alias
+}
+```
+
+Suno always returns two takes from a single request. Send both to the
+user with the `message` tool (one call per file) and let them choose —
+agents that send only the first systematically lose half the value of
+every generation.
+
+### CLI flag overrides
+
+CLI flags still work and override JSON values for ad-hoc tweaks (no
+need to rewrite the JSON for a small change):
+
+```bash
+python3 generate_song.py --input-json /workspace/.suno/song.json --title "Take 2"
+```
+
+For instrumental tracks, set `"instrumental": true` in the JSON (or
+pass `--instrumental` on the CLI).
+
+### Sandbox / host path lookup
+
+In agentic-media sandboxes the script is always at
+`/agentic-media/creative-skills/suno-mcp/scripts/generate_song.py`
+(via the canonical `/agentic-media:ro` bind) — use the absolute path.
+For host / fresh-clone work outside a sandbox:
+
+```bash
+SCRIPT=$(find /agentic-media "$HOME" /home /workspace -maxdepth 7 \
+        -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
+```
 
 ## Importing an existing Suno song
 

@@ -371,37 +371,99 @@ def _print_dry_run(args, base: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate a song with Suno MCP and download both variants.")
+    # `--input-json` is the recommended path for sandboxed agents:
+    # the agent writes a JSON file with the song spec via the `write`
+    # tool, then runs this script with a single argument. No shell
+    # quoting of multiline lyrics, no need to wrap in a per-invocation
+    # python helper. CLI flags (--lyrics, --tags, …) still work and
+    # override JSON values when both are supplied — handy for ad-hoc
+    # tweaks (e.g. `--input-json spec.json --title "Take 2"`).
+    parser.add_argument("--input-json", "-j",
+                        help="Path to a JSON file with keys "
+                             "{lyrics, tags, title, instrumental, "
+                             "negative_prompt, url, output_dir, "
+                             "timeout}. Any subset is allowed; CLI "
+                             "flags override JSON values.")
     parser.add_argument("--lyrics", "-l", help="Song lyrics")
-    parser.add_argument("--tags", "-t", required=True, help="Genre/style prompt (producer brief)")
-    parser.add_argument("--title", "-T", required=True, help="Song title")
+    parser.add_argument("--tags", "-t", help="Genre/style prompt (producer brief)")
+    parser.add_argument("--title", "-T", help="Song title")
     parser.add_argument("--instrumental", "-i", action="store_true",
                         help="Instrumental track (no vocals)")
-    parser.add_argument("--negative-prompt", "-n", default="",
+    parser.add_argument("--negative-prompt", "-n", default=None,
                         help="Styles to avoid, e.g. 'heavy metal, screaming'")
     parser.add_argument("--url", help="Override SUNO_MCP_URL env var")
     parser.add_argument("--output-dir", help="Override SUNO_OUTPUT_DIR env var")
-    parser.add_argument("--timeout", type=int, default=400,
+    parser.add_argument("--timeout", type=int, default=None,
                         help="Total timeout in seconds (default 400 — pipeline is 3-5 min)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the MCP request body and exit without calling the server")
 
     args = parser.parse_args()
-    base = (args.url or os.environ.get("SUNO_MCP_URL") or DEFAULT_BASE).rstrip("/")
+
+    # Merge: JSON file (if any) provides defaults; CLI flags override.
+    spec: dict = {}
+    if args.input_json:
+        try:
+            spec = json.loads(Path(args.input_json).read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"Error reading --input-json {args.input_json}: {e}",
+                  file=sys.stderr)
+            sys.exit(1)
+        if not isinstance(spec, dict):
+            print(f"Error: --input-json {args.input_json} must contain a JSON object, "
+                  f"got {type(spec).__name__}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    def _pick(cli_value, spec_key: str, default=None):
+        if cli_value is not None:
+            return cli_value
+        if spec_key in spec:
+            return spec[spec_key]
+        return default
+
+    lyrics          = _pick(args.lyrics,          "lyrics",          "")
+    tags            = _pick(args.tags,            "tags",            None)
+    title           = _pick(args.title,           "title",           None)
+    instrumental    = args.instrumental or bool(spec.get("instrumental", False))
+    negative_prompt = _pick(args.negative_prompt, "negative_prompt", "")
+    url             = _pick(args.url,             "url",             None)
+    output_dir      = _pick(args.output_dir,      "output_dir",      None)
+    timeout         = _pick(args.timeout,         "timeout",         400)
+
+    if not tags:
+        print("Error: --tags (or 'tags' key in --input-json) is required.",
+              file=sys.stderr)
+        sys.exit(2)
+    if not title:
+        print("Error: --title (or 'title' key in --input-json) is required.",
+              file=sys.stderr)
+        sys.exit(2)
+
+    base = (url or os.environ.get("SUNO_MCP_URL") or DEFAULT_BASE).rstrip("/")
 
     if args.dry_run:
+        # _print_dry_run reads from args; fill the resolved fields back
+        # in so the dry-run reflects the merged values.
+        args.lyrics = lyrics
+        args.tags = tags
+        args.title = title
+        args.instrumental = instrumental
+        args.negative_prompt = negative_prompt
+        args.output_dir = output_dir
         _print_dry_run(args, base)
         return
 
     try:
         result = generate_song(
-            lyrics=args.lyrics or "",
-            tags=args.tags,
-            title=args.title,
-            instrumental=args.instrumental,
-            negative_prompt=args.negative_prompt or "",
+            lyrics=lyrics or "",
+            tags=tags,
+            title=title,
+            instrumental=instrumental,
+            negative_prompt=negative_prompt or "",
             base_url=base,
-            output_dir=args.output_dir,
-            timeout=args.timeout,
+            output_dir=output_dir,
+            timeout=timeout,
         )
         print(json.dumps(result, indent=2))
     except Exception as e:
