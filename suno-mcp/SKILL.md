@@ -52,14 +52,26 @@ propagation; agent prompts and skill code don't need to mention them.
 
 Resolve the script once at the top of the agent run with `find`, then call it
 by absolute path. The skill works equally well from a host install, an
-OpenClaw sandbox checkout, or a fresh `git clone` — there is no canonical
-install path it relies on.
+OpenClaw sandbox checkout, or a fresh `git clone`.
+
+**Sandboxed agents (commons / per-role lordships)**: the skill bundle is
+RO-bind-mounted at `/agentic-media/creative-skills/`, so the script is
+always at `/agentic-media/creative-skills/suno-mcp/scripts/generate_song.py`.
+Use the absolute path directly — no `find` needed.
+
+**Host or fresh clone**: include `/agentic-media` in the search roots
+*before* the legacy paths, since both can be present simultaneously
+when working from an overlord workspace:
 
 ```bash
-SCRIPT=$(find "$HOME" /home /workspace -maxdepth 7 \
+SCRIPT=$(find /agentic-media "$HOME" /home /workspace -maxdepth 7 \
         -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
 python3 "$SCRIPT" --lyrics='...' --tags='...' --title='...'
 ```
+
+The legacy form `find "$HOME" /home /workspace ...` silently fails in
+agentic-media sandboxes because creative-skills are not mirrored under
+`/workspace/skills/` — they ship via the `/agentic-media` canonical bind.
 
 ⚠️ `--tags` = full producer brief (NOT keywords). Read first: `cat <skill-dir>/references/style-guide.md`.
 
@@ -73,10 +85,10 @@ Use the Python helper script — it handles shell quoting safely for long lyrics
 and detailed style prompts.
 
 ```python
-# 1. Locate the script (works on host install, sandbox install, or fresh clone).
-#    Order: $HOME first (host install), /home (other-user paths), /workspace
-#    (sandbox repo checkouts).
-SCRIPT=$(find "$HOME" /home /workspace -maxdepth 7 \
+# 1. Locate the script.
+#    Sandboxed agents: hard-code /agentic-media/creative-skills/suno-mcp/scripts/generate_song.py.
+#    Host / fresh clone: search /agentic-media first, then $HOME/home/workspace.
+SCRIPT=$(find /agentic-media "$HOME" /home /workspace -maxdepth 7 \
         -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
 
 # 2. Generate + auto-download BOTH variants (3–5 minutes, use 400s timeout)
