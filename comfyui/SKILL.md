@@ -132,6 +132,50 @@ separate so this skill stays generic.
 
 ### comfy_graph.py — CLI entry point (most common)
 Builds workflows and submits them. All commands support `--output-dir`, `--timeout`, `--seed`.
+
+#### Sandboxed-agent pattern: `--input-json` (no wrapper scripts)
+
+Sandboxed agents (commons, per-role lordships) cannot reliably pass
+long prompts via `--prompt "..."` on the shell command line — the
+exec preflight rejects "complex interpreter invocation" when prompts
+contain quotes, newlines, or shell-special characters. Do NOT write
+a per-invocation python wrapper file; instead use the two-step
+write+exec pattern:
+
+1. Write a JSON spec via the `write` tool (no shell parsing):
+
+   ```jsonc
+   // /workspace/.comfy/job.json
+   {
+     "prompt": "an elephant playing chess in a smoky 1920s salon, ...",
+     "seconds": 8,
+     "seed": 42,
+     "notify_target": "discord:channel:1234"
+   }
+   ```
+
+2. Run comfy_graph.py with a single argument — no shell quoting of
+   user content:
+
+   ```bash
+   python3 /agentic-media/creative-skills/comfyui/scripts/comfy_graph.py \
+     t2v --input-json /workspace/.comfy/job.json
+   ```
+
+JSON keys map 1:1 to the long-form CLI flag names with dashes
+converted to underscores (`notify_target` ↔ `--notify-target`). Any
+subset is allowed. CLI flags after `--input-json` still override
+individual values, so an ad-hoc re-run with a tweaked seed is one
+flag:
+
+```bash
+python3 comfy_graph.py t2v --input-json job.json --seed 99
+```
+
+The same pattern works for every subcommand (t2i, i2i, t2v, i2v,
+ia2v, flf2v, transition, multiguide, multiprompt, i2i2multi,
+i2iNmulti, tts, …).
+
 ```
 t2i          Text-to-image (Flux2)
 i2i          Single-reference image edit (Flux2, 1 ref + prompt)
