@@ -873,7 +873,11 @@ def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str 
 
 
 def _extract_last_frame(scene_mp4: Path, out_png: Path) -> None:
-    rc = subprocess.run([str(VIDEO_JOIN), "last-frame",
+    # video_join.py is a `uv run --script` script with inline deps. Executing
+    # the .py path directly works via shebang on POSIX but Windows rejects it
+    # with "WinError 193: not a valid Win32 application". Invoke via `uv run
+    # --script` everywhere so the same call works on both platforms.
+    rc = subprocess.run(["uv", "run", "--script", str(VIDEO_JOIN), "last-frame",
                          "--input", str(scene_mp4), "--output", str(out_png)],
                         capture_output=True).returncode
     if rc != 0:
