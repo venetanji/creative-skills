@@ -140,6 +140,53 @@ Athena will `init`, fill the YAML, run `song`, then report the variants back
 (gate 1). After a human renames the chosen variant, Athena resumes with
 scene authoring → `anchors` → gate 2 → `scenes` → `assemble`.
 
+### Long renders MUST go through `sessions_spawn` — never block the agent
+
+`scenes`, `transitions`, `all` for any non-trivial spec take **30 minutes
+to several hours**. The agent invoking those commands must NOT exec them
+directly and tail stdout — that locks the agent's turn for hours, floods
+the chat with `[18:21:43] transition 2→3 done` lines, and prevents any
+further user message from being handled.
+
+The right pattern is OpenClaw's [sub-agent](/tools/subagents) mechanism:
+`sessions_spawn` (or `/subagents spawn`) creates a background child run
+with **push-based completion**. The parent returns to the user within
+seconds; the child runs the long subprocess; when the child finishes,
+OpenClaw wakes the parent with the result. **Do not poll** `sessions_list`
+or `/subagents list` — the announce is automatic.
+
+Skeleton the agent should follow (pseudocode for the parent's tool call):
+
+```
+sessions_spawn({
+  agentId: "<self>",          // same agent, isolated child session
+  context: "isolated",        // child gets the brief only — no transcript fork
+  task: """
+    Run the music-video scenes phase for /workspace/<slug>:
+      uv run --script /home/sandbox/.openclaw/skills/music-video/scripts/music_video.py \\
+        scenes /workspace/<slug>/song.yaml
+    Stream nothing back during the run. When complete, report:
+      - exit code
+      - the count of files in <slug>/scenes/*.mp4
+      - the path to <slug>/run.log
+  """,
+  runTimeoutSeconds: 21600,   // 6 h ceiling — adjust per spec size
+})
+```
+
+The parent immediately tells the user "Render started in the background,
+I'll let you know when it's done" and yields its turn. The next visible
+parent turn is the announce when the child finishes (success or fail).
+
+Same pattern for `transitions`, `all`, and `assemble` when the spec is
+large. The short-running commands (`init`, `plan`, `song`, `anchors`,
+single `scene N`) stay inline — they finish within an agent turn budget.
+
+For raw subprocess detachment without spawning a child agent (you don't
+need it here, but it's the same shape), see OpenClaw's [background
+tasks](/automation/tasks) — `nohup`, `setsid`, or `disown` on a wrapped
+command, with the agent later inspecting the run.log to surface status.
+
 ## Script paths (absolute; no `~`)
 
 The canonical install path is `~/.openclaw/skills/music-video/scripts/music_video.py`.
