@@ -884,6 +884,73 @@ def _extract_last_frame(scene_mp4: Path, out_png: Path) -> None:
         sys.exit(f"failed to extract last frame of {scene_mp4}")
 
 
+def _normalize_loras(scene: dict, vs: dict) -> list[dict]:
+    """Normalize per-scene LoRA spec to a unified list of dicts.
+
+    Two input shapes are supported:
+
+    1. NEW (preferred):
+         scene.loras: [{file, kind, strength, reference_video?, reference?,
+                        reference_strength?}, ...]
+       — chainable list. Today only `kind: ic_lora` is wired through; any
+       other kind raises sys.exit (deferred until comfy_graph grows
+       LoraLoaderModelOnly chaining flags).
+
+    2. OLD (back-compat with every v8/v9 yaml in /workspace/handoffs/):
+         scene.hdr_lora: {file, strength, reference|reference_video,
+                          reference_strength, scene_emb?, scene_emb_strength?}
+         video.hdr_lora: same shape (project-wide default).
+       Converted to the new shape in-memory: file → ic_lora entry, and
+       scene_emb (if set) → second ic_lora entry.
+
+    Scene-level `loras:` and `hdr_lora:` both win over the video-level
+    default. Scene-level `hdr_lora: null` (explicit) disables the default;
+    scene-level `loras: []` is treated as "no LoRAs".
+
+    Returns the normalized list (possibly empty). Does NOT touch the CLI
+    surface — caller walks the list to assemble --ic_loras et al.
+    """
+    # Scene-level loras: short-circuits everything else.
+    if "loras" in scene:
+        scene_loras_raw = scene.get("loras") or []
+        out: list[dict] = []
+        for entry in scene_loras_raw:
+            kind = entry.get("kind")
+            if kind != "ic_lora":
+                sys.exit(
+                    f"scene loras[*].kind={kind!r} not yet supported — "
+                    f"only `ic_lora` is wired through comfy_graph today. "
+                    f"Standard LoRA chaining (LoraLoaderModelOnly) needs "
+                    f"a new --extra-lora CLI flag on comfy_graph.py."
+                )
+            out.append(dict(entry))
+        return out
+
+    # Old hdr_lora shape (scene override or video default). An explicit
+    # `scene.hdr_lora: null` disables the video-level default.
+    if "hdr_lora" in scene:
+        h = scene.get("hdr_lora")
+    else:
+        h = vs.get("hdr_lora")
+    if not h:
+        return []
+    scene_loras = [{
+        "file": h["file"],
+        "kind": "ic_lora",
+        "strength": h.get("strength", 1.0),
+        "reference_video": h.get("reference_video"),
+        "reference_image": h.get("reference"),
+        "reference_strength": h.get("reference_strength", 1.0),
+    }]
+    if h.get("scene_emb"):
+        scene_loras.append({
+            "file": h["scene_emb"],
+            "kind": "ic_lora",
+            "strength": h.get("scene_emb_strength", 0.8),
+        })
+    return scene_loras
+
+
 def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     scenes = spec.get("scenes", [])
     if idx < 1 or idx > len(scenes):
@@ -933,7 +1000,13 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     # don't need audio lookhead — render at duration_sec exactly.
     is_lipsync = bool(scene.get("anchor"))
     tail_buffer = float(vs.get("tail_buffer_sec", 0.0))
-    effective_duration = float(scene["duration_sec"]) + (tail_buffer if is_lipsync else 0.0)
+    # tail_buffer always applied — LTX's ×8 latent temporal compression
+    # frequently rounds frame counts DOWN, so without a buffer the rendered
+    # mp4 lands short of duration_sec (e.g. 4.21s → 4.04s). Padding here +
+    # trimming in storyboard/assemble.py keeps audio in lockstep with video.
+    # The lipsync flag historically gated this for vocal-margin reasons but
+    # the trim step already drops the tail, so all scenes can share it.
+    effective_duration = float(scene["duration_sec"]) + tail_buffer
 
     # Audio source resolution for ia2v conditioning. Priority:
     #   1. scene.lipsync_audio (per-scene override; pass null/None to force
@@ -990,46 +1063,64 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     if scene.get("fast") or (spec.get("video") or {}).get("fast"):
         common += ["--fast"]
 
-    # Optional HDR (or other) IC-LoRA stack — sourced from video.hdr_lora
-    # (project-wide) or scene.hdr_lora (per-scene override). Either is a dict:
-    #   {file: <safetensors>, strength: 1.0, reference: <png path>,
-    #    reference_strength: 1.0, scene_emb: <safetensors> (optional),
-    #    scene_emb_strength: 1.0}
-    # or null/missing to disable. The reference image is mandatory when an
-    # IC-LoRA is set — the LoRA weights only act in concert with the
-    # ImagePrepForICLora + LTXAddVideoICLoRAGuide chain that consumes the
-    # reference. Without it the LoRA stacks have no visible effect.
-    hdr_cfg = scene.get("hdr_lora") if "hdr_lora" in scene else vs.get("hdr_lora")
-    if hdr_cfg:
-        ic_pairs: list[str] = []
-        ic_pairs.append(f"{hdr_cfg['file']}:{float(hdr_cfg.get('strength', 1.0)):.2f}")
-        if hdr_cfg.get("scene_emb"):
-            ic_pairs.append(
-                f"{hdr_cfg['scene_emb']}:{float(hdr_cfg.get('scene_emb_strength', 1.0)):.2f}")
-        ref = hdr_cfg.get("reference")
-        ref_video = hdr_cfg.get("reference_video")
-        # Static-image reference (HDR-style frame-0 bias): use --ic_lora_reference.
+    # IC-LoRA stack — unified via _normalize_loras which accepts both the
+    # new `scene.loras: [...]` shape and the legacy `scene.hdr_lora:` /
+    # `video.hdr_lora:` shape. The list may contain multiple ic_lora
+    # entries (e.g. union-control + HDR + future scene-emb), all stacked
+    # through the same --ic_loras pair list. Reference video/image is
+    # taken from the FIRST entry that declares one; only one reference
+    # per scene is supported today (the LTXAddVideoICLoRAGuide chain in
+    # ltx2.py emits a single guide using the last loader's
+    # latent_downscale_factor — see open question in the design doc).
+    scene_loras = _normalize_loras(scene, vs)
+    if scene_loras:
+        ic_pairs: list[str] = [
+            f"{e['file']}:{float(e.get('strength', 1.0)):.2f}" for e in scene_loras
+        ]
+        # First entry that declares a reference wins; any subsequent
+        # entry trying to declare its own reference is an error today.
+        ref_entry: dict | None = None
+        for e in scene_loras:
+            if e.get("reference_video") or e.get("reference_image"):
+                if ref_entry is None:
+                    ref_entry = e
+                else:
+                    sys.exit(
+                        "multi-reference IC-LoRA chains not yet supported — "
+                        "needs ltx2.py guide-per-loader patch. Today "
+                        "LTXAddVideoICLoRAGuide is emitted once per scene "
+                        "using the last loader's latent_downscale_factor; "
+                        f"second reference declared on {e.get('file')!r} "
+                        "cannot be honoured."
+                    )
+        if ref_entry is None:
+            sys.exit(
+                "scene IC-LoRA stack needs `reference` (image) OR "
+                "`reference_video` (mp4) on at least one entry — the LoRA "
+                "weights only act in concert with the LTXAddVideoICLoRAGuide "
+                "chain that consumes the reference."
+            )
+        ref_video = ref_entry.get("reference_video")
+        ref = ref_entry.get("reference_image")
+        # Static-image reference (HDR-style frame-0 bias): --ic_lora_reference.
         # Video reference (depth/canny/motion-track per-frame conditioning):
-        # use --ic_lora_reference_video. Pass either one. The video form
-        # bypasses ImagePrepForICLora server-side and uses ResizeImageMaskNode
-        # 'scale to multiple' instead — that's what the official Lightricks
-        # workflow does and it's what gives full-frame coverage on portrait
-        # outputs (vs the ImagePrepForICLora left-bias bug we hit on the
-        # square-prep path).
-        if not ref and not ref_video:
-            sys.exit("video.hdr_lora needs `reference` (image) OR `reference_video` (mp4)")
+        # --ic_lora_reference_video. The video form bypasses
+        # ImagePrepForICLora server-side and uses ResizeImageMaskNode
+        # 'scale to multiple' — what the official Lightricks workflow does
+        # and what gives full-frame coverage on portrait outputs (vs the
+        # ImagePrepForICLora left-bias bug on the square-prep path).
         common += ["--ic_loras", ",".join(ic_pairs),
                    "--ic_lora_reference_strength",
-                   str(float(hdr_cfg.get("reference_strength", 1.0)))]
+                   str(float(ref_entry.get("reference_strength", 1.0)))]
         if ref_video:
             rv_path = (project / ref_video).resolve() if not Path(ref_video).is_absolute() else Path(ref_video)
             if not rv_path.exists():
-                sys.exit(f"video.hdr_lora.reference_video points at {rv_path} which does not exist")
+                sys.exit(f"scene IC-LoRA reference_video points at {rv_path} which does not exist")
             common += ["--ic_lora_reference_video", str(rv_path)]
         else:
             ref_path = (project / ref).resolve() if not Path(ref).is_absolute() else Path(ref)
             if not ref_path.exists():
-                sys.exit(f"video.hdr_lora.reference points at {ref_path} which does not exist")
+                sys.exit(f"scene IC-LoRA reference points at {ref_path} which does not exist")
             common += ["--ic_lora_reference", str(ref_path)]
 
     # guides: optional yaml list of additional keyframe guides at specified

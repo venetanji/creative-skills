@@ -449,6 +449,16 @@ HANDLERS = {
         fast=bool(opts.get("fast")),
         camera_lora=opts.get("camera_lora"),
         camera_lora_strength=float(opts.get("camera_lora_strength", 0.8)),
+        ic_loras=[
+            (parts[0].strip(), float(parts[1]) if len(parts) > 1 else 1.0)
+            for parts in (s.split(":") for s in opts.get("ic_loras", "").split(",") if s.strip())
+        ] or None,
+        ic_lora_reference_filename=(
+            upload_if_local(opts["ic_lora_reference_video"])
+            if opts.get("ic_lora_reference_video")
+            else (upload_if_local(opts.get("ic_lora_reference", ""))
+                  if opts.get("ic_lora_reference") else None)),
+        ic_lora_reference_strength=float(opts.get("ic_lora_reference_strength", 1.0)),
         seed=seed),
     "transition": lambda opts, seed, prompt: ltx2.ltx2_transition(
         first_frame_filename=upload_if_local(opts.get("first", "")),
@@ -487,6 +497,16 @@ HANDLERS = {
         camera_lora=opts.get("camera_lora"),
         camera_lora_strength=float(opts.get("camera_lora_strength", 0.8)),
         debug_save_audio=bool(opts.get("debug_save_audio")),
+        ic_loras=[
+            (parts[0].strip(), float(parts[1]) if len(parts) > 1 else 1.0)
+            for parts in (s.split(":") for s in opts.get("ic_loras", "").split(",") if s.strip())
+        ] or None,
+        ic_lora_reference_filename=(
+            upload_if_local(opts["ic_lora_reference_video"])
+            if opts.get("ic_lora_reference_video")
+            else (upload_if_local(opts.get("ic_lora_reference", ""))
+                  if opts.get("ic_lora_reference") else None)),
+        ic_lora_reference_strength=float(opts.get("ic_lora_reference_strength", 1.0)),
         seed=seed),
     "tts": lambda opts, seed, prompt: tts.qwen_tts(
         text=opts.get("text", prompt), filename_prefix=opts.get("prefix", "tts")),

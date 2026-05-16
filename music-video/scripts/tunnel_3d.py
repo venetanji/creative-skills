@@ -339,6 +339,16 @@ def handle_vocals(notes, meta, tunnel, camera_state):
         for k in range(-4, 5):
             tunnel.bump(a0 + k * 0.15, amp * (1 - abs(k) / 5),
                         camera_state["z"])
+        # Pitch-driven tunnel spin — higher vocal notes accelerate the
+        # camera roll. Operator request 2026-05-16: "the fractal LoRA at
+        # the end of the tunnel should spin faster driven by the pitch
+        # of the voice". Normalized pitch in [0,1] × velocity becomes a
+        # positive impulse on roll_vel, accumulated per vocal onset.
+        # Sustained high vocals = sustained CW spin acceleration that
+        # the snare's existing ± wobble rides on top of. The natural
+        # decay in the main loop pulls roll_vel back down when vocals
+        # fall silent (e.g., during the post-drop drum-only beats).
+        camera_state["roll_vel"] += 3.0 * p * v
 
 
 def handle_backing(notes, tunnel, camera_state):

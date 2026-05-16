@@ -394,12 +394,13 @@ it. Anything not listed is silently ignored.
 | `video.resolution` | `[w, h]` | `[1024, 576]` | [`_video_spec`](scripts/music_video.py#L310) | LTX **working** resolution (final video is `2×` this — see `anchor_scale`); both dims must be multiples of 32 |
 | `video.anchor_scale` | float | `2.0` | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 anchor renders at `resolution × anchor_scale`. Default `2.0` matches LTX-2.3's spatial upscaler so anchors carry real detail at the **final** output resolution. Set to `1.0` for legacy behaviour (anchor at working res). |
 | `video.negative` | str | `None` | [`_video_spec`](scripts/music_video.py#L310) | negative prompt applied to every LTX scene |
-| `video.tail_buffer_sec` | float | `0.0` | [`_video_spec`](scripts/music_video.py#L310) | extra seconds rendered past each lipsync scene's `duration_sec`, trimmed at assembly (gives LTX phoneme look-ahead) |
+| `video.tail_buffer_sec` | float | `0.0` | [`_video_spec`](scripts/music_video.py#L310) | extra seconds rendered past EVERY scene's `duration_sec`, trimmed at assembly. Two reasons: (a) lipsync phoneme look-ahead, (b) LTX's ×8 latent temporal compression rounds frame counts DOWN — without this buffer a 4.21s request can land at 4.04s and audio drifts ahead of video. Recommend `0.5` for all music videos. |
 | `video.lipsync_audio` | path | none | [`cmd_scene`](scripts/music_video.py#L871) | vocal-forward remix used for ia2v conditioning only; `song.mp3` stays canonical for assembly |
 | `video.camera_lora` | str | none | [`cmd_scene`](scripts/music_video.py#L871) | default camera LoRA for scenes that don't set their own |
 | `video.camera_lora_strength` | float | `0.8` | [`cmd_scene`](scripts/music_video.py#L871) | default LoRA strength |
 | `video.fast` | bool | `false` | [`cmd_scene`](scripts/music_video.py#L871) | default for `scene[].fast` (skip 2-pass refine; iteration shortcut) |
-| `video.hdr_lora` | str | none | [`cmd_scene`](scripts/music_video.py#L871) | optional HDR LoRA name; per-scene override available |
+| `video.hdr_lora` | dict | none | [`_normalize_loras`](scripts/music_video.py#L887) | LEGACY single-LoRA slot, auto-converted to a 1-entry `loras:` list at render. Keys: `file`, `strength`, `reference_video|reference`, `reference_strength`, `scene_emb`, `scene_emb_strength`. Prefer the new `loras:` list below. |
+| `video.loras` | list | none | [`_normalize_loras`](scripts/music_video.py#L887) | NEW chained LoRA schema. Each entry: `{file, kind: ic_lora, strength, reference_video|reference, reference_strength}`. Today only `kind: ic_lora` is supported; multi-reference IC-LoRA chains error out with a clear message until `ltx2.py` gets a guide-per-loader patch. Back-compat: existing yamls using `hdr_lora:` keep working unchanged. |
 | `video.base_guide_strength` | float | `0.9` | [`cmd_scene`](scripts/music_video.py#L871) | LTX base-pass guide strength for multiguide scenes |
 | `video.refine_guide_strength` | float | `0.7` | [`cmd_scene`](scripts/music_video.py#L871) | LTX refine-pass guide strength for multiguide scenes |
 | `video.transitions` | dict | none | [`cmd_transitions`](scripts/music_video.py#L1149) | per-boundary LTX morph clips (see below) |
@@ -430,7 +431,8 @@ it. Anything not listed is silently ignored.
 | `camera_lora` | str | from `video.camera_lora` | [`cmd_scene`](scripts/music_video.py#L871) | one of `static`, `dolly-in`, `dolly-out`, `dolly-left`, `dolly-right`, `jib-up`, `jib-down` |
 | `camera_lora_strength` | float | from `video.camera_lora_strength` | [`cmd_scene`](scripts/music_video.py#L871) | LoRA strength override |
 | `fast` | bool | inherits `video.fast` | [`cmd_scene`](scripts/music_video.py#L871) | skip 2-pass refine for this scene |
-| `hdr_lora` | str/null | inherits `video.hdr_lora` | [`cmd_scene`](scripts/music_video.py#L871) | per-scene HDR LoRA override; `null` disables |
+| `hdr_lora` | dict/null | inherits `video.hdr_lora` | [`_normalize_loras`](scripts/music_video.py#L887) | per-scene LEGACY LoRA override; `null` disables. Prefer per-scene `loras:` below. |
+| `loras` | list/null | inherits `video.loras` | [`_normalize_loras`](scripts/music_video.py#L887) | per-scene chained LoRA override. Same shape as `video.loras`. |
 | `lipsync_audio` | path/null | inherits `video.lipsync_audio` | [`cmd_scene`](scripts/music_video.py#L871) | per-scene ia2v audio override; `null` forces `song.mp3` |
 | `base_guide_strength` | float | inherits `video.base_guide_strength` | [`cmd_scene`](scripts/music_video.py#L871) | multiguide base-pass guide strength override |
 | `refine_guide_strength` | float | inherits `video.refine_guide_strength` | [`cmd_scene`](scripts/music_video.py#L871) | multiguide refine-pass guide strength override |
