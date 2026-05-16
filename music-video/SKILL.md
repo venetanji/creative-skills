@@ -86,13 +86,53 @@ downstream scene — don't skip the gates unless you're sure.
    — that re-encoded copy is fine for transcription but do NOT use it as
    the ia2v audio source (LTX's audio VAE wants the full-quality input).
 
+   **If Suno gave you a stem pack (zip of `.wav` + `.mid` per stem),
+   unpack it first** so the MIDI is available to the bar-grid analyser:
+   ```bash
+   unpack_suno_pack.py <Title>.zip --out <project-dir>
+   # → <project>/stems/{vocals,drums,bass,guitar,synth,fx,backing_vocals}.wav
+   # → <project>/midi/<same>.mid
+   ```
+   Skipping this step costs you the **drum tempo map** and the
+   **per-stem MIDI phrase boundaries** — both crucial for the next step.
+
+5b. **OPTIONAL but recommended — combine MIDI bar grid + vocal phrases
+    + Whisper STT into a ranked scene-boundary proposal.** This catches
+    musically-wrong cuts that the segment SRT alone won't:
+
+    ```bash
+    analyze_midi.py  <project-dir>                    # report tempo / bars
+    analyze_song.py  <project-dir> \
+        --whisper-srt <project>/<prefix>_segments.srt \
+        --scenes <N> --min-spacing 4
+    ```
+
+    The output is a table of `[start, dur, lyric]` per scene, snapped to
+    bar boundaries where possible, that you can drop into `scenes:`.
+    Mostly: the song's BPM dictates a bar length (e.g. 123 BPM → 1.944s);
+    every scene end that doesn't land within ~100ms of a bar will feel
+    musically off in playback. Use this output as the starting point even
+    if you adjust some boundaries by hand.
+
 6. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
    `duration_sec`, `prompt`, `image` (`@anchor | @last | path`). Optionally
    give a scene an `anchor:` block to pre-render a flux2 key frame for it.
-   Lift `start_sec`/`duration_sec` straight from `<prefix>_segments.srt`
-   (step 5); each scene's span should land on a vocal-phrase boundary,
-   and total duration must equal the song length (probe with
-   `ffmpeg -i song.mp3` if unknown).
+   Lift `start_sec`/`duration_sec` straight from `analyze_song.py`'s
+   output (step 5b) when you have a MIDI, or from `<prefix>_segments.srt`
+   (step 5) otherwise. Total duration must equal the song length (probe
+   with `ffmpeg -i song.mp3` if unknown).
+
+   **Validate every boundary against `<prefix>_words.srt` before
+   rendering.** Segment-level SRT marks line endings, but vocalists
+   routinely sustain final phonemes 0.3-1s past the line's nominal end —
+   if your scene ends inside that sustain, LTX cuts the operator's mouth
+   in the middle of "do" or "say" and the next scene's overlay audio
+   carries the lingering vowel. Open `_words.srt`, find the line you're
+   cutting on, and ensure your `start_sec + duration_sec` lands on the
+   END of the last word in the line (or in a clear silent gap), not the
+   "end" reported by the segment SRT. A 30-line audit script:
+   `python3 -c "import re; ..."` over `_words.srt` flagging boundaries
+   that fall inside word spans is faster than reviewing the final video.
 7. **`anchors <spec>`** — flux2 renders the top-level `anchor_image` (from
    `anchor_prompt`, or fallback `title + style`) plus any per-scene anchors.
    Idempotent — skips files already on disk.
@@ -580,17 +620,18 @@ A fuller reference with all optional fields is at `references/example.yaml`. For
 
 1. **Style brief** is a producer-style text-to-music prompt. See `~/.openclaw/skills/suno-mcp/references/style-guide.md` for the full pattern (genre, BPM, instruments, production, vocal, mood, narrative sentence). Avoid keyword lists.
 2. **Lyrics** use `[Verse]/[Chorus]/[Bridge]/[Instrumental]` tags. One line per phrase; no mid-line punctuation. See `~/.openclaw/skills/suno-mcp/references/lyrics-guide.md`.
-3. **Scenes** should map to lyric structure. Typical layout for a 2-minute song at ~90 BPM:
-   - verse A → 1 scene, 15-20s
-   - chorus 1 → 1 scene, 10-15s
-   - verse B → 1 scene
-   - chorus 2 → 1 scene
-   - bridge/outro → 1 scene
-   Align `start_sec`/`duration_sec` with the actual song structure. Duration accuracy matters for audio-reactive feel.
+3. **Scenes** should map to lyric structure. For a ~3-minute song, prefer **shorter, more numerous scenes** (~6-8s each, 20-30 total) over a small number of long ones. Long scenes (15s+) are at LTX's edge and benefit less from re-rolls. Short scenes give you variety per chorus and let you place dancer close-ups / cutaway beats between operator-lipsync passes. Align `start_sec`/`duration_sec` with the actual song structure — duration accuracy matters for audio-reactive feel.
 4. **Scene prompts** should describe what's on screen — not tell a story. LTX-2.3 handles short camera moves well (dolly, pan, push-in) and struggles with cuts. Keep each scene as a continuous shot.
 5. **Image chain** with `@last` for continuity between adjacent scenes; use `@anchor` or a literal path to reset to a different look (verse/chorus transitions).
-6. **Resolution**: 1024×576 is a good default for music videos. 768×512 is faster. Higher eats GPU.
+6. **Resolution**: 1024×576 is a good default for music videos. 768×512 is faster. Higher eats GPU. (LTX's 2× upscaler then doubles to the final output — see `video.anchor_scale`.)
 7. **Negative prompt**: use the `video.negative` field to blacklist "ugly, pc game, cartoon, text" etc. Keeps LTX-2.3 from drifting.
+8. **Cold-open / first appearance**. Don't put the protagonist in scene 1 by default. A short atmospheric `t2i` / `i2i` (curtain, empty stage, exterior establishing) for the instrumental intro, then cut to the protagonist's first appearance **exactly when a defining instrument enters** (typically the drums — use `analyze_midi.py` to find the first drum hit). The cut feels earned because the protagonist's entrance lands with the beat that just kicked in. The cold-open boundary is almost never the first vocal — it's the first drum hit, which is usually 1-3s earlier.
+9. **Variety beats inside each chorus**. A chorus rendered as ONE 15s scene of the protagonist lipsyncing reads as static. Split it into 3 shorter (4-7s) scenes: wide-stage establishing, close-up of a *different* character (a dancer mouthing the answer hook), push-in on the protagonist's face. Same lyric, three different camera languages. This is the single biggest "professional music video" lever short of using transitions.
+10. **Featured-character cameos (call-and-response, duets, eye-contact moments)**. When the lyric is about *engagement* — call-and-response, "I wanna hear you say", a partner's answer — having the operator literally turn and meet eyes with another person *makes the song's emotional argument visible*. Two patterns:
+    - **`i2i2` against `[operator, group_setting]`** picks the partner from the recurring cast (a chorus dancer). LTX renders an interchangeable face — fine for chorus formations, bad for "the singular partner" moment.
+    - **`i2iN` against `[operator, setting, featured_singer.png]`** uses a dedicated reference image for the duet partner so they're visually distinct from the recurring cast. Make `featured_singer.png` a t2i upfront with explicit "different from any of the dancers" language (different hair, different outfit, different posture). Reuse this ref across every eye-contact / duet scene to keep her identity consistent.
+11. **Hand anatomy guidance for crowd shots**. flux2 will hallucinate extra hands the moment multiple people are mid-gesture in the same frame ("operator with mic raised + dancers with arms up" → often produces a third hand on the operator). Write the anchor prompt with **explicit positional language per character** (e.g. "operator's right hand thrusting the chrome mic forward, his left hand at his side; dancers behind with both arms straight up overhead in symmetric V") and add `anatomically correct hands` to the prompt tail. Same fix for "operator + featured singer sharing a mic" — say which hand holds the mic.
+12. **Avoid long sustains at scene cuts**. Scenes that end mid-sustain (held "ever", held "do", held "say") cut LTX's lipsync mid-phoneme. Move the boundary to **after** the sustain ends — check `_words.srt` for the exact word-end time, not the segment-end time. This is the single most common source of "the lipsync looks weird at the cut" reports.
 
 ## Troubleshooting
 
@@ -605,6 +646,12 @@ A fuller reference with all optional fields is at `references/example.yaml`. For
 **Scenes visually inconsistent** → pin `@anchor` on the first scene and chain `@last` through the rest. Add specific character/place descriptors in every scene prompt, not just the first.
 
 **`UnicodeEncodeError` on Windows** → the script prints unicode glyphs (→ ✓ ⚠) and writes them to `run.log`. As of the latest version, `music_video.py` reconfigures stdout/stderr/log file to utf-8 at startup, so this should "just work" on PowerShell / cmd.exe. If you're on an older copy and still see `'charmap' codec can't encode character '→'`, prefix the invocation with `PYTHONIOENCODING=utf-8` or upgrade the skill.
+
+**Lipsync feels off / words cut at scene boundaries** → your `start_sec`/`duration_sec` are landing inside word spans rather than at word ends. Don't trust segment SRT timings for this — vocalists sustain final phonemes past line-end. Open `<prefix>_words.srt`, find what word is being sung at each scene's `end_sec`, and shift the boundary to **after** that word's end. Re-render only the affected scene + the one starting at the new boundary; everything else is preserved by the restart-safe scene cache. See "Avoid long sustains at scene cuts" in the prompting recipe.
+
+**Cuts feel "off the beat"** → your boundaries are not bar-aligned. Run `analyze_midi.py <project>` to get the bar grid (e.g. 123.4 BPM → 1.944s/bar), then nudge each `end_sec` to the nearest bar boundary that also respects a word-end (the two usually coincide within ~150ms for well-recorded vocals).
+
+**`mido.KeySignatureError: Could not decode key with 16 sharps`** → Suno's stem-pack midi exports occasionally emit key signature meta events outside the standard MIDI spec. The current `analyze_midi.py` / `analyze_song.py` pre-populate mido's decode table with safe fallbacks so the file loads — if you're on an older copy, monkey-patch `mido.midifiles.meta._key_signature_decode` to add fallback entries before the first `MidiFile()` call.
 
 ## Advanced (not in v1)
 
