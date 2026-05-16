@@ -130,7 +130,8 @@ up front, when only `song.yaml` exists and no GPU time has been spent:
 
 | Decision | Where it lives | Why it has to be early |
 |---|---|---|
-| **Aspect & resolution** | `video.resolution: [w, h]` | Hard-coded into every anchor prompt ("vertical 9:16" vs "16:9 widescreen") and every render. Switching aspect after `anchors` invalidates every PNG. Common picks: `[1024, 576]` (16:9 broadcast), `[576, 1024]` (9:16 vertical / social). Must be multiples of 32. |
+| **Aspect & resolution** | `video.resolution: [w, h]` | Hard-coded into every anchor prompt ("vertical 9:16" vs "16:9 widescreen") and every render. This is LTX's **working** resolution; the LTX-2.3 spatial upscaler doubles it for the final output. Common picks: `[832, 448]` (16:9 broadcast → 1664×896 final), `[448, 832]` (9:16 vertical → 896×1664 final), `[576, 1024]` (9:16 a touch larger → 1152×2048 final). Both dims must be multiples of 32. Switching aspect after `anchors` invalidates every PNG. |
+| **Anchor scale** | `video.anchor_scale` | Default `2.0` — flux2 anchors render at `resolution × scale` so they carry detail at the final upscaled video resolution. Larger anchors take longer to render but produce noticeably crisper output. Set `1.0` if you'd rather flux2 work at the working resolution (faster, looser final detail). |
 | **Cast** | `subjects:` + reference photos in the project dir | Each named subject (`operator`, `dancers`, `interviewer`, …) needs (a) a one-line description token and (b) at least one reference image so per-scene `i2i`/`i2i2` anchors can lock identity. Adding a character later means re-rolling every scene they appear in. |
 | **Canonical settings** | `sheets/<setting>.png` (project convention) + `scenes[].anchor.references` | Pre-render one PNG per recurring location (e.g. main stage, b-stage, exterior). Scene anchors `i2i2` against [character, setting] so the world stays visually constant. Without canonical setting refs, each scene anchor invents its own version of the place. |
 | **Lipsync mode** | `video.lipsync_audio` | If you want LTX to lipsync against a vocal-forward remix instead of the mastered mix, supply it now. Switching mid-project means re-rendering every singing scene. |
@@ -350,7 +351,8 @@ it. Anything not listed is silently ignored.
 | key | type | default | code | meaning |
 |---|---|---|---|---|
 | `video.fps` | int | `24` | [`_video_spec`](scripts/music_video.py#L310) | LTX/output frame rate |
-| `video.resolution` | `[w, h]` | `[1024, 576]` | [`_video_spec`](scripts/music_video.py#L310) | output dimensions; must be multiples of 32 |
+| `video.resolution` | `[w, h]` | `[1024, 576]` | [`_video_spec`](scripts/music_video.py#L310) | LTX **working** resolution (final video is `2×` this — see `anchor_scale`); both dims must be multiples of 32 |
+| `video.anchor_scale` | float | `2.0` | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 anchor renders at `resolution × anchor_scale`. Default `2.0` matches LTX-2.3's spatial upscaler so anchors carry real detail at the **final** output resolution. Set to `1.0` for legacy behaviour (anchor at working res). |
 | `video.negative` | str | `None` | [`_video_spec`](scripts/music_video.py#L310) | negative prompt applied to every LTX scene |
 | `video.tail_buffer_sec` | float | `0.0` | [`_video_spec`](scripts/music_video.py#L310) | extra seconds rendered past each lipsync scene's `duration_sec`, trimmed at assembly (gives LTX phoneme look-ahead) |
 | `video.lipsync_audio` | path | none | [`cmd_scene`](scripts/music_video.py#L871) | vocal-forward remix used for ia2v conditioning only; `song.mp3` stays canonical for assembly |

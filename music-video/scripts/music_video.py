@@ -622,11 +622,16 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
         return str(anchor_path)
 
     vs = _video_spec(spec)
-    # Anchor at the video's target resolution — LTX downsizes anyway via
-    # ResizeImagesByLongerEdge(1536) + ResizeImageMaskNode. Higher anchor res
-    # just wastes flux2 time. Override per-scene via anchor.width/height.
-    w = int(anchor_cfg.get("width",  vs["width"]))
-    h = int(anchor_cfg.get("height", vs["height"]))
+    # Anchor resolution defaults to `video.resolution × video.anchor_scale`.
+    # Default scale is 2.0 to match LTX-2.3's 2-pass spatial upscaler
+    # (LTXVLatentUpsampler 2×): the final rendered video is 2× the LTX
+    # working resolution, so rendering anchors at 2× video means flux2 puts
+    # real detail at the output resolution rather than at the LTX working
+    # resolution. Set `video.anchor_scale: 1.0` to opt out (legacy behavior),
+    # or override per-scene via `anchor.width` / `anchor.height`.
+    anchor_scale = float(vs.get("anchor_scale", 2.0))
+    w = int(anchor_cfg.get("width",  int(vs["width"]  * anchor_scale)))
+    h = int(anchor_cfg.get("height", int(vs["height"] * anchor_scale)))
 
     # Support t2i / i2i / i2i2 / angles. Either `reference` (single path) or
     # `references` (list) — type is inferred from the count, or set explicitly.
@@ -762,8 +767,12 @@ def cmd_anchors(spec: dict, project: Path) -> None:
                 prompt = (f"{title}. {style}" if title or style else
                           "a cinematic music-video key frame, atmospheric lighting")
             vs = _video_spec(spec)
-            w = int(vs["width"])
-            h = int(vs["height"])
+            # Match `_generate_anchor`: render at video.resolution × anchor_scale
+            # so the top-level anchor has detail at the final upscaled video
+            # resolution (LTX's 2× spatial upscaler doubles output).
+            anchor_scale = float(vs.get("anchor_scale", 2.0))
+            w = int(vs["width"]  * anchor_scale)
+            h = int(vs["height"] * anchor_scale)
             prefix = anchor_path.stem   # e.g. "anchor"
             cmd = ["python3", str(COMFY), "t2i",
                    "--prompt", prompt,
