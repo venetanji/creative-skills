@@ -21,6 +21,15 @@ import sys
 import zipfile
 from pathlib import Path
 
+# Windows cp1252 default stdout chokes on the ✓ glyph below. Reconfigure
+# stdout/stderr to utf-8 so the same script runs on POSIX and Windows.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 STEM_RE = re.compile(r"\(([^)]+)\)\.([a-zA-Z0-9]+)$")
 
 

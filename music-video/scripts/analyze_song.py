@@ -45,10 +45,32 @@ import re
 import sys
 from pathlib import Path
 
+# Windows cp1252 default stdout can't print → ✓ ⚠ glyphs. Reconfigure to
+# utf-8 at module load so this script's status output is portable.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 try:
     import mido
 except ImportError:
     sys.exit("mido missing. Re-run via `uv run --script` (auto-installs).")
+
+# Suno's midi exports occasionally emit key-signature meta events outside
+# the standard MIDI spec (e.g. 16 sharps, mode 0), raising
+# `mido.KeySignatureError` on load. Pre-populate the decode table with safe
+# fallbacks so loading is robust; the bar/tempo data we use is unaffected.
+try:
+    from mido.midifiles.meta import _key_signature_decode  # type: ignore
+    for _n in range(-128, 128):
+        for _mode in (0, 1):
+            if (_n, _mode) not in _key_signature_decode:
+                _key_signature_decode[(_n, _mode)] = "C"
+except Exception:
+    pass
 
 # --- reused helpers from analyze_midi.py (kept local to avoid circular import) ---
 
