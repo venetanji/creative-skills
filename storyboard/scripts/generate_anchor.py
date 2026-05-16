@@ -44,6 +44,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so this script's status lines (which use
+# unicode glyphs like → ✓ …) print cleanly on Windows consoles whose
+# default code page is cp1252. Safe no-op on POSIX.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # ── make the lib importable no matter where we're invoked from ──────
 SCRIPT_DIR = Path(__file__).resolve().parent
 LIB_DIR = SCRIPT_DIR.parent / "lib"

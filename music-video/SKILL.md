@@ -122,6 +122,30 @@ music_video.py all --no-gate <spec>    # skip both gates, full autopilot
 Restart-safe throughout: anything already on disk is skipped. Iterate
 individual scenes with `scene N song.yaml`.
 
+## Command index
+
+Every step of the pipeline maps to one CLI subcommand in
+[`scripts/music_video.py`](scripts/music_video.py). The table below
+cross-references each subcommand to its handler in code so authors can read
+the exact behaviour, and lists every spec field the step consumes.
+
+| Step | CLI | Handler | Reads from spec | Writes |
+|---|---|---|---|---|
+|  1  | `init <slug> [--theme=<txt>] [--force]` | [`cmd_init`](scripts/music_video.py#L259) | *(no spec; takes `slug` + `--theme` + `--force`)* | `<workspace>/<slug>/song.yaml` skeleton |
+|  —  | `plan <spec>` | [`cmd_plan`](scripts/music_video.py#L374) | full spec (validation + breakdown) | stdout |
+|  3  | `song <spec>` | [`cmd_song`](scripts/music_video.py#L472) | `title`, `style`, `lyrics`, `suno.runs`, `suno.make_instrumental` | `song.mp3`, `song_v2.mp3`, …, `song_meta.json` |
+|  7  | `anchors <spec>` | [`cmd_anchors`](scripts/music_video.py#L731) → [`_generate_anchor`](scripts/music_video.py#L604) per scene | `anchor_image`, `anchor_prompt`, `subjects`, `scenes[].anchor.*` | `anchor.png` (top-level if missing) + `scenes/NNN-<label>-anchor.png` × N |
+|  9  | `scene N <spec>` | [`cmd_scene`](scripts/music_video.py#L871) | full scene block, `video.*`, `subjects` | `scenes/NNN-<label>.mp4`, `scenes/NNN-<label>-last.png`, `song_slices/NNN-<label>.mp3` |
+|  9  | `scenes <spec>` | [`cmd_scenes`](scripts/music_video.py#L1519) (loops `cmd_scene`) | same | same × N |
+|  9b | `transitions <spec>` | [`cmd_transitions`](scripts/music_video.py#L1149) | `video.transitions.*`, `scenes[].transition_from_prev.*` | `scenes/NNN-<label>-transition.mp4` × (N−1) (only if `video.transitions.enabled`) |
+| 10  | `assemble <spec>` | [`cmd_assemble`](scripts/music_video.py#L1310) | `scenes[].duration_sec`, `video.transitions.*`, `tail_buffer_sec` | `final.mp4`, `final_v2.mp4`, …  (one per song variant) |
+|  *  | `all <spec> [--no-gate]` | [`cmd_all`](scripts/music_video.py#L1420) | `gate_confirm_song`, `gate_confirm_anchors` (+ everything above) | runs `song → anchors → scenes → transitions → assemble`, stops at the two gates by default |
+|  —  | `status <spec>` | [`cmd_status`](scripts/music_video.py#L1545) | scenes list (to enumerate expected outputs) | stdout report (✓/—) per file |
+
+**Quality gates** — `cmd_all` stops after `song` (gate 1) and after `anchors` (gate 2) by default. Override per-spec via `gate_confirm_song: false` / `gate_confirm_anchors: false`, or per-invocation via `--no-gate`.
+
+**Workflow-step column (1, 3, 7, 9, 10)** — corresponds to the numbered phases in [**The loop**](#the-loop) above. Steps 2/4/5/6/8 are human review/decisions (variant pick, STT, scene authoring, anchor review), not CLI commands.
+
 ## Using with openclaw agents
 
 Any agent with `music-video` in its `agents.list[<id>].skills` array can run
@@ -278,6 +302,127 @@ scenes:
     prompt: "lighthouse blinks through fog, beam sweeps across waves"
     image: "@last"
 ```
+
+### Complete schema reference
+
+Every key the orchestrator reads from a spec, cross-referenced to the
+function in [`scripts/music_video.py`](scripts/music_video.py) that consumes
+it. Anything not listed is silently ignored.
+
+#### Top-level
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `title` | str | `"Untitled"` | [`cmd_song`](scripts/music_video.py#L472) | suno generation title |
+| `style` | str | `""` | [`cmd_song`](scripts/music_video.py#L472) | suno producer-style brief |
+| `lyrics` | str | `""` | [`cmd_song`](scripts/music_video.py#L472) | suno lyrics with `[Verse]`/`[Chorus]` tags |
+| `suno.runs` | int | `1` | [`cmd_song`](scripts/music_video.py#L472) | each run yields 2 variants → `runs * 2` mp3s |
+| `suno.make_instrumental` | bool | `false` | [`cmd_song`](scripts/music_video.py#L472) | request instrumental-only variants |
+| `subjects` | `dict[str, str]` | `{}` | [`_expand_subjects`](scripts/music_video.py#L352) | `{name}` tokens substituted in every prompt (scene + anchor) |
+| `anchor_image` | path | none | [`cmd_anchors`](scripts/music_video.py#L731) | top-level PNG; scenes referencing `image: "@anchor"` use this |
+| `anchor_prompt` | str | falls back to `title + style` | [`cmd_anchors`](scripts/music_video.py#L731) | flux2 prompt for the top-level anchor when `anchor_image` is missing |
+| `gate_confirm_song` | bool | `true` | [`cmd_all`](scripts/music_video.py#L1420) | `all` halts after `song` for human review |
+| `gate_confirm_anchors` | bool | `true` | [`cmd_all`](scripts/music_video.py#L1420) | `all` halts after `anchors` for human review |
+| `video` | dict | `{}` | [`_video_spec`](scripts/music_video.py#L310) | renderer config (see below) |
+| `scenes` | list | `[]` | [`cmd_plan`](scripts/music_video.py#L374) | scene list (rendered in order) |
+
+#### `video.*`
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `video.fps` | int | `24` | [`_video_spec`](scripts/music_video.py#L310) | LTX/output frame rate |
+| `video.resolution` | `[w, h]` | `[1024, 576]` | [`_video_spec`](scripts/music_video.py#L310) | output dimensions; must be multiples of 32 |
+| `video.negative` | str | `None` | [`_video_spec`](scripts/music_video.py#L310) | negative prompt applied to every LTX scene |
+| `video.tail_buffer_sec` | float | `0.0` | [`_video_spec`](scripts/music_video.py#L310) | extra seconds rendered past each lipsync scene's `duration_sec`, trimmed at assembly (gives LTX phoneme look-ahead) |
+| `video.lipsync_audio` | path | none | [`cmd_scene`](scripts/music_video.py#L871) | vocal-forward remix used for ia2v conditioning only; `song.mp3` stays canonical for assembly |
+| `video.camera_lora` | str | none | [`cmd_scene`](scripts/music_video.py#L871) | default camera LoRA for scenes that don't set their own |
+| `video.camera_lora_strength` | float | `0.8` | [`cmd_scene`](scripts/music_video.py#L871) | default LoRA strength |
+| `video.fast` | bool | `false` | [`cmd_scene`](scripts/music_video.py#L871) | default for `scene[].fast` (skip 2-pass refine; iteration shortcut) |
+| `video.hdr_lora` | str | none | [`cmd_scene`](scripts/music_video.py#L871) | optional HDR LoRA name; per-scene override available |
+| `video.base_guide_strength` | float | `0.9` | [`cmd_scene`](scripts/music_video.py#L871) | LTX base-pass guide strength for multiguide scenes |
+| `video.refine_guide_strength` | float | `0.7` | [`cmd_scene`](scripts/music_video.py#L871) | LTX refine-pass guide strength for multiguide scenes |
+| `video.transitions` | dict | none | [`cmd_transitions`](scripts/music_video.py#L1149) | per-boundary LTX morph clips (see below) |
+
+#### `video.transitions.*`
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `enabled` | bool | `false` | [`cmd_transitions`](scripts/music_video.py#L1149) | turn the `transitions` stage on |
+| `duration` | float | `2.0` | [`cmd_transitions`](scripts/music_video.py#L1149) | total per-boundary clip length (seconds); `0` = hard cut |
+| `guide_sec` | float | `1.0` | [`cmd_transitions`](scripts/music_video.py#L1149) | real-video guide on each side; middle = `duration − 2·guide_sec` |
+| `fps` | int | inherits `video.fps` | [`cmd_transitions`](scripts/music_video.py#L1149) | transition fps |
+| `prompt` | str | "smooth morph" | [`cmd_transitions`](scripts/music_video.py#L1149) | default morph prompt; overridable per boundary |
+| `default_b_sparse` | str | `"96"` | [`cmd_transitions`](scripts/music_video.py#L1149) | comma list of latent positions for B-side anchor (e.g. `"72,80,88,96"` for 4f into singing) |
+| `fast` | bool | inherits `video.fast` | [`cmd_transitions`](scripts/music_video.py#L1149) | skip 2-pass refine on transition renders |
+
+#### `scenes[]` items
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `label` | str | `"scene"` | [`_scene_stem`](scripts/music_video.py#L300) | short id; used in output filenames (`NNN-<label>.mp4`) |
+| `start_sec` | float | required | [`cmd_scene`](scripts/music_video.py#L871) | scene start in song; drives audio-slice start |
+| `duration_sec` | float | required, ≤15s | [`cmd_scene`](scripts/music_video.py#L871) | scene length; hard cap is `MAX_SCENE_DURATION` (15.0s) |
+| `prompt` | str | required | [`cmd_scene`](scripts/music_video.py#L871) | LTX ia2v prompt (continuous shot; `{subjects}` tokens expand) |
+| `image` | str | `"@anchor"` | [`_resolve_image`](scripts/music_video.py#L813) | first-frame source: `"@anchor"`, `"@last"`, `"@none"` (forces t2v), or a literal path |
+| `anchor` | dict | none | [`_generate_anchor`](scripts/music_video.py#L604) | per-scene flux2 pre-render config (see below); when present, this PNG becomes the scene's first frame |
+| `guides` | list | none | [`cmd_scene`](scripts/music_video.py#L871) (resolved via `storyboard.lib.guides.resolve_guides`) | mid-scene `LTXVAddGuide` entries (see "Multi-guide scenes") |
+| `camera_lora` | str | from `video.camera_lora` | [`cmd_scene`](scripts/music_video.py#L871) | one of `static`, `dolly-in`, `dolly-out`, `dolly-left`, `dolly-right`, `jib-up`, `jib-down` |
+| `camera_lora_strength` | float | from `video.camera_lora_strength` | [`cmd_scene`](scripts/music_video.py#L871) | LoRA strength override |
+| `fast` | bool | inherits `video.fast` | [`cmd_scene`](scripts/music_video.py#L871) | skip 2-pass refine for this scene |
+| `hdr_lora` | str/null | inherits `video.hdr_lora` | [`cmd_scene`](scripts/music_video.py#L871) | per-scene HDR LoRA override; `null` disables |
+| `lipsync_audio` | path/null | inherits `video.lipsync_audio` | [`cmd_scene`](scripts/music_video.py#L871) | per-scene ia2v audio override; `null` forces `song.mp3` |
+| `base_guide_strength` | float | inherits `video.base_guide_strength` | [`cmd_scene`](scripts/music_video.py#L871) | multiguide base-pass guide strength override |
+| `refine_guide_strength` | float | inherits `video.refine_guide_strength` | [`cmd_scene`](scripts/music_video.py#L871) | multiguide refine-pass guide strength override |
+| `transition_from_prev` | dict | none | [`cmd_transitions`](scripts/music_video.py#L1149) | override the LTX morph clip on the INCOMING boundary (see below) |
+
+#### `scenes[].anchor.*`
+
+When `anchor.prompt` is set, [`_generate_anchor`](scripts/music_video.py#L604) flux2-pre-renders a PNG per scene and uses it as that scene's first frame, overriding `image`.
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `type` | `t2i` \| `i2i` \| `i2i2` \| `i2iN` \| `angles` | inferred from `len(references)` | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 mode |
+| `prompt` | str | required | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 prompt; `{subjects}` tokens expand |
+| `reference` | path | none | [`_generate_anchor`](scripts/music_video.py#L604) | single reference image (for `i2i`) |
+| `references` | list[path] | none | [`_generate_anchor`](scripts/music_video.py#L604) | 2+ references (for `i2i2`, `i2iN`, `angles`); first is the primary |
+| `width` | int | from `video.resolution[0]` | [`_generate_anchor`](scripts/music_video.py#L604) | anchor render width override |
+| `height` | int | from `video.resolution[1]` | [`_generate_anchor`](scripts/music_video.py#L604) | anchor render height override |
+| `steps` | int | flux2 default (~8) | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 sampler steps |
+| `keep_identity` | bool | `true` | [`_generate_anchor`](scripts/music_video.py#L604) | for `i2i`/`i2i2`: auto-append "keep face/features from reference" guard. Set `false` to suppress |
+| `angle_prompts` | list[str] | `[prompt]` | [`_generate_anchor`](scripts/music_video.py#L604) | for `type: angles` — multi-pose batch from one reference |
+
+**Anchor-type cheatsheet** (full discussion in the [`storyboard`](../storyboard/SKILL.md) skill):
+
+| type | refs | use when |
+|---|---|---|
+| `t2i` | 0 | pure environment / no character (setting shots) |
+| `i2i` | 1 | character into a specific scene (most common) |
+| `i2i2` | 2 | character + setting blend, or character A + character B meet |
+| `i2iN` | 3+ | small group scenes (cap at 3–4 — identity drifts past that) |
+| `angles` | 1 | character-sheet building (multi-pose batch from one reference) |
+
+#### `scenes[].guides[]` items (multi-guide)
+
+Resolved via `storyboard.lib.guides.resolve_guides`.
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `image` | str | required | `@anchor`, `@last`, or a path; relative paths resolve against project dir |
+| `at_sec` | float | — | absolute seconds from scene start (takes precedence) |
+| `at_relative` | float (0..1) | — | fraction of `duration_sec` |
+| `at_frame` | int | — | explicit LTX latent frame (snaps to multiples of 8) |
+| `strength` | float | `1.0` | `LTXVAddGuide` weight |
+| `label` | str | — | human-readable, ignored by resolver |
+
+#### `scenes[].transition_from_prev.*`
+
+Goes on the INCOMING scene (B-side), not scene A. Read by [`cmd_transitions`](scripts/music_video.py#L1149).
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `duration` | float | from `video.transitions.duration` | per-boundary length; `0` = hard cut (LTX morph skipped) |
+| `b_sparse` | str | from `video.transitions.default_b_sparse` | B-side latent positions for this boundary |
+| `prompt` | str | from `video.transitions.prompt` | morph prompt for this boundary only |
 
 ### Camera LoRAs
 
@@ -437,6 +582,8 @@ A fuller reference with all optional fields is at `references/example.yaml`. For
 **Suno login required** → `mcporter call suno.suno_login --config ~/.openclaw/config/mcporter.json` first.
 
 **Scenes visually inconsistent** → pin `@anchor` on the first scene and chain `@last` through the rest. Add specific character/place descriptors in every scene prompt, not just the first.
+
+**`UnicodeEncodeError` on Windows** → the script prints unicode glyphs (→ ✓ ⚠) and writes them to `run.log`. As of the latest version, `music_video.py` reconfigures stdout/stderr/log file to utf-8 at startup, so this should "just work" on PowerShell / cmd.exe. If you're on an older copy and still see `'charmap' codec can't encode character '→'`, prefix the invocation with `PYTHONIOENCODING=utf-8` or upgrade the skill.
 
 ## Advanced (not in v1)
 

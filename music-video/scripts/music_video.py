@@ -77,6 +77,17 @@ from __future__ import annotations
 import argparse, json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so the script can print the unicode glyphs
+# it uses for status (→ ✓ ⚠ — …) on Windows consoles whose default code
+# page is cp1252. Without this, any unicode print() crashes with
+# UnicodeEncodeError. Safe no-op on POSIX where stdout is already utf-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # Lazy imports for pyyaml + imageio_ffmpeg. These are heavy deps that
 # only some subcommands need — `init` just writes a text skeleton and
 # should work on any minimal sandbox with stock python3 (no uv, no
@@ -118,7 +129,7 @@ def _log(project: Path, msg: str) -> None:
     ts = time.strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line, flush=True)
-    with open(project / "run.log", "a") as f:
+    with open(project / "run.log", "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 
@@ -139,7 +150,7 @@ def _run(cmd: list[str], cwd: Path | None = None, log_path: Path | None = None,
         for line in p.stdout:
             print(line, end="")
             if log_path:
-                with open(log_path, "a") as f:
+                with open(log_path, "a", encoding="utf-8") as f:
                     f.write(line)
         p.wait()
         return p.returncode
@@ -163,7 +174,10 @@ def _load_spec(yaml_path: str) -> tuple[dict, Path]:
     p = Path(yaml_path).resolve()
     if not p.exists():
         sys.exit(f"spec not found: {p}")
-    spec = _require_yaml().safe_load(p.read_text())
+    # Force utf-8 — Path.read_text() picks the OS default (cp1252 on
+    # Windows), which mangles em-dashes and other non-ASCII glyphs that
+    # legitimately appear in style/lyrics/scene prompts.
+    spec = _require_yaml().safe_load(p.read_text(encoding="utf-8"))
     _fill_scene_start_sec(spec)
     return spec, p.parent  # project dir = dir containing the yaml
 
@@ -275,7 +289,7 @@ def cmd_init(slug: str, theme: str | None, force: bool) -> None:
         theme_style_hint=theme_style_hint,
         theme_lyrics_hint=theme_lyrics_hint,
     )
-    yaml_path.write_text(content)
+    yaml_path.write_text(content, encoding="utf-8")
 
     print(f"created {project}/")
     print(f"  song.yaml (skeleton)")
@@ -660,6 +674,19 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
     if "steps" in anchor_cfg:
         common += ["--steps", str(int(anchor_cfg["steps"]))]
 
+    # Friendly ref-count validation BEFORE indexing ref_paths blindly —
+    # otherwise an explicit `type: i2i2` with one (or zero) references
+    # fails with an opaque IndexError instead of a hint.
+    _min_refs = {"i2i": 1, "i2i2": 2, "i2iN": 1, "angles": 1}.get(anchor_type)
+    if _min_refs is not None and len(ref_paths) < _min_refs:
+        sys.exit(f"scene {idx}: anchor.type '{anchor_type}' needs at least "
+                 f"{_min_refs} reference image(s), got {len(ref_paths)}. "
+                 f"Set `reference:` (one path) or `references: [a.png, b.png]` "
+                 f"in the scene's anchor block.")
+    if anchor_type == "i2i2" and len(ref_paths) > 2:
+        sys.exit(f"scene {idx}: anchor.type 'i2i2' takes exactly 2 references, "
+                 f"got {len(ref_paths)}. Use `type: i2iN` for 3+.")
+
     if anchor_type == "t2i":
         cmd = ["python3", str(COMFY), "t2i"] + common
     elif anchor_type == "i2i":
@@ -670,8 +697,6 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
                "--image2", str(ref_paths[1])] + common
     elif anchor_type == "i2iN":
         # 3+ references: comfy_graph.py i2iN takes a comma-separated list.
-        if not ref_paths:
-            sys.exit(f"scene {idx}: i2iN anchor needs at least one reference")
         images_csv = ",".join(str(p) for p in ref_paths)
         cmd = ["python3", str(COMFY), "i2iN", "--images", images_csv] + common
     elif anchor_type == "angles":
@@ -682,7 +707,7 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
                "--prompts", "\n".join(angle_prompts)] + common
     else:
         sys.exit(f"scene {idx}: unknown anchor.type '{anchor_type}' "
-                 "(expected t2i|i2i|i2i2|angles)")
+                 "(expected t2i|i2i|i2i2|i2iN|angles)")
 
     _log(project, f"scene {idx}: generating anchor via flux2 "
                   f"({anchor_type}{' refs='+','.join(refs) if refs else ''})")
