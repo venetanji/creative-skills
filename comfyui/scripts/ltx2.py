@@ -630,28 +630,47 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     else:
-        # ┌─ 2-PASS IC-LoRA TODO ─────────────────────────────────────────┐
-        # │ When ic_lora_active AND fast=False, we should ALSO re-apply  │
-        # │ LTXAddVideoICLoRAGuide on the upsampled pass-2 latent —      │
-        # │ same pattern as id_branch below. Without it, the IC-LoRA's   │
-        # │ conditioning is dropped through the refine step. See         │
-        # │ STRUCTURAL-FOLLOWUPS.md "2-pass IC-LoRA refine — open work"  │
-        # │ for the ~30-LOC fix sketch. Not yet implemented because all  │
-        # │ current renders are fast=True for iteration speed.           │
-        # └──────────────────────────────────────────────────────────────┘
         av_for_pass2, cropped_cond = _upsample_between(
             g, av_pass1, cond, vae=checkpoint[2], upscaler=upscaler,
             image_ref=image_ref,
             refine_guide_strength=refine_guide_strength)
-        # Re-apply identity guide on the upsampled pass-2 latent.
-        # av_for_pass2 is AV-concatenated; split → AddGuide on video →
-        # re-concat with the preserved audio latent.
+        # Re-apply both IC-LoRA and identity guides on the upsampled
+        # pass-2 latent. Without re-applying, those conditioning branches
+        # dilute through the refine step — IC-LoRA conditioning is dropped
+        # ("glitchy squares" / canny+depth lost in the refine pass — first
+        # observed on stable-altitude v8 high-res 2026-05-15), and the
+        # identity anchor loses its bias. Order mirrors pass-1: IC-LoRA
+        # first, then id_branch on the IC-LoRA-conditioned final_cond.
         final_cond = cropped_cond
+        if ic_lora_active:
+            # The conditioning latent for the LoRA's attention layers
+            # must be re-encoded at the new (doubled) spatial scale.
+            # Re-run LTXAddVideoICLoRAGuide with the same ic_ref_prep
+            # batch and the same latent_downscale_factor sourced from
+            # LTXICLoRALoaderModelOnly's slot 1. See
+            # STRUCTURAL-FOLLOWUPS.md "2-pass IC-LoRA refine" for the
+            # full rationale (resolved 2026-05-16).
+            sep2_ic = g.node("LTXVSeparateAVLatent", av_latent=av_for_pass2[0])
+            ic_guide2 = g.node("LTXAddVideoICLoRAGuide",
+                                positive=final_cond[0], negative=final_cond[1],
+                                vae=checkpoint[2], latent=sep2_ic[0],
+                                image=ic_ref_prep[0],
+                                frame_idx=0,
+                                strength=float(ic_lora_reference_strength),
+                                latent_downscale_factor=ic_loaded[1],
+                                crop="disabled",
+                                use_tiled_encode=False,
+                                tile_size=256,
+                                tile_overlap=64)
+            av_for_pass2 = g.node("LTXVConcatAVLatent",
+                                   video_latent=ic_guide2[2],
+                                   audio_latent=sep2_ic[1])
+            final_cond = ic_guide2
         if id_branch is not None:
             sep2 = g.node("LTXVSeparateAVLatent", av_latent=av_for_pass2[0])
             id_frame = max(8, ((int(length) // 2) // 8) * 8)
             id_guide2 = g.node("LTXVAddGuide",
-                                positive=cropped_cond[0], negative=cropped_cond[1],
+                                positive=final_cond[0], negative=final_cond[1],
                                 vae=checkpoint[2], latent=sep2[0],
                                 image=id_branch[0], frame_idx=id_frame,
                                 strength=float(identity_strength))
