@@ -309,8 +309,16 @@ def _upsample_between(g, av_pass1, cond, vae, upscaler, image_ref,
     sep = g.node("LTXVSeparateAVLatent", av_latent=av_pass1[0])
     cropped = g.node("LTXVCropGuides",
                      positive=cond[0], negative=cond[1], latent=sep[0])
+    # Feed the CROPPED latent (cropped[2]) into the upsampler — not sep[0].
+    # When IC-LoRA / id_branch added conditioning frames in pass-1, those
+    # frames live in the latent and must be removed before upsampling,
+    # otherwise pass-2 refines 2x as many latent frames as the user
+    # requested → 2x-duration glitched output. The official lipdub
+    # 2-stage workflow wires its upsampler from CropGuides.latent for
+    # this reason. The basic ia2v 2-stage workflow (no AddGuide) can use
+    # sep[0] because it has no cond frames to strip.
     upsampled = g.node("LTXVLatentUpsampler",
-                       samples=sep[0], upscale_model=upscaler[0], vae=vae)
+                       samples=cropped[2], upscale_model=upscaler[0], vae=vae)
     if image_ref is not None and refine_guide_strength > 0:
         bypass = g.node("PrimitiveBoolean", value=False)
         video_re = g.node("LTXVImgToVideoInplace",
@@ -630,22 +638,13 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     else:
-        # ┌─ 2-PASS IC-LoRA TODO ─────────────────────────────────────────┐
-        # │ When ic_lora_active AND fast=False, we should ALSO re-apply  │
-        # │ LTXAddVideoICLoRAGuide on the upsampled pass-2 latent —      │
-        # │ same pattern as id_branch below. Without it, the IC-LoRA's   │
-        # │ conditioning is dropped through the refine step. See         │
-        # │ STRUCTURAL-FOLLOWUPS.md "2-pass IC-LoRA refine — open work"  │
-        # │ for the ~30-LOC fix sketch. Not yet implemented because all  │
-        # │ current renders are fast=True for iteration speed.           │
-        # └──────────────────────────────────────────────────────────────┘
+        # 2-pass refine path. _upsample_between strips IC-LoRA / id_branch
+        # cond frames from the latent before upsampling (see comment in
+        # that helper) so pass-2 refines only the requested-length latent.
         av_for_pass2, cropped_cond = _upsample_between(
             g, av_pass1, cond, vae=checkpoint[2], upscaler=upscaler,
             image_ref=image_ref,
             refine_guide_strength=refine_guide_strength)
-        # Re-apply identity guide on the upsampled pass-2 latent.
-        # av_for_pass2 is AV-concatenated; split → AddGuide on video →
-        # re-concat with the preserved audio latent.
         final_cond = cropped_cond
         if id_branch is not None:
             sep2 = g.node("LTXVSeparateAVLatent", av_latent=av_for_pass2[0])

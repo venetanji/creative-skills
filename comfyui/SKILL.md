@@ -228,13 +228,91 @@ standalone scene description. Flux-2 Klein is an image-editing model when given 
 verbose edit instructions outperform terse scene descriptions.
 
 ### comfy_query.py — Server diagnostics
+
+The first thing to reach for when a render fails, the queue is wedged, or you need to know what's installed on the server. All commands honour `COMFY_URL`.
+
 ```
-stats              GPU/RAM usage, comfy version
-queue              Running and pending jobs
-loras              Available LoRAs
-models [type]      Models in category (loras, diffusion_models, checkpoints…)
-node <ClassName>   Input/output schema for any node
-history [id]       Inspect a specific prompt_id (or last 5)
+stats                          # GPU/RAM usage, comfy version, python/torch versions
+queue                          # currently-running prompt + pending list
+loras                          # available LoRAs
+models [<type>]                # files in a category (loras|diffusion_models|checkpoints|vae|text_encoders|upscale_models|…)
+node <ClassName>               # the node's input schema + dropdown enum values
+history [<prompt_id>]          # status, executed nodes, errors for a specific run
+history --limit N              # the last N runs
+```
+
+**Canonical workflow when a render fails:**
+
+```bash
+# 1. Pull the failed prompt_id from your render output. It's printed at the start:
+#    prompt_id: 7690667a-f37f-497c-b57e-827b1c1d6f49
+
+# 2. Inspect the failure
+COMFY_URL=https://media-relay.tail74c072.ts.net:8189 \
+  python3 comfy_query.py history 7690667a-f37f-497c-b57e-827b1c1d6f49
+
+# Output shows status (running / error / success), executed nodes, and on error
+# the failing node + the upstream node_type + the exception_message.
+
+# 3. If `status: error`, the exception_message is the actual problem.
+#    Common patterns:
+#      "Conditioning frames exceed the length of the latent sequence"
+#         → cond+pass-1-output-length math is off. Common when re-applying
+#           IC-LoRA on a latent that wasn't cropped first; or when the
+#           cond video is shorter than the requested duration.
+#      "Adding guide to a combined AV latent is not supported"
+#         → an LTXVAddGuide / LTXAddVideoICLoRAGuide ran AFTER ConcatAV.
+#           Always Add{Video}Guide BEFORE ConcatAV in the pass-1 chain.
+#      "HTTP 413"
+#         → ComfyUI server proxy body-size limit; re-encode the audio
+#           (only when running STT, not when ia2v needs full quality).
+
+# 4. If `status: running` for too long, check queue / server stats:
+COMFY_URL=… python3 comfy_query.py queue
+COMFY_URL=… python3 comfy_query.py stats     # VRAM exhaustion shows up here
+
+# 5. If a node-type validation error suggests an enum/dropdown mismatch,
+#    look up the node's allowed values:
+COMFY_URL=… python3 comfy_query.py node LTXICLoRALoaderModelOnly
+# returns the input schema + the list of available .safetensors filenames
+```
+
+**Recovering an output after a client-side timeout:**
+
+`comfy_graph.py` polls `/history/<prompt_id>` every 2s with a 15s per-request timeout. If the bridge hiccups or the server restarts mid-render, the client raises `TimeoutError` even though the file may have been saved. **Don't immediately re-render** — use comfy_query to check first:
+
+```bash
+# Did the prompt finish? (history is keyed by prompt_id printed at submit time)
+COMFY_URL=… python3 comfy_query.py history <prompt_id>
+
+# Anything else running / queued?
+COMFY_URL=… python3 comfy_query.py queue
+
+# Pull the file directly if the server still has it (filename in history outputs):
+curl -O "https://media-relay.tail74c072.ts.net:8189/view?filename=<name>&type=output"
+```
+
+If history is empty AND queue is empty AND the file is not at `/view`, the server was restarted and the render genuinely needs to be re-run.
+
+### `dump` — print the workflow JSON without submitting
+
+`comfy_graph.py dump <op> <args>` builds the exact workflow that `<op>` would submit and prints it to stdout. Use it to:
+
+- See what the script will send to ComfyUI before running it (sanity-check params).
+- Pipe into `comfy_run.py` for fine-grained control (e.g. custom output dir).
+- Diff against the official Lightricks workflows at `https://github.com/Lightricks/ComfyUI-LTXVideo/tree/master/example_workflows/2.3` when investigating an output that looks wrong — that's how the 2026-05-16 "glitchy squares" bug was found (our `_upsample_between` was wiring `LTXVLatentUpsampler` from the pre-crop latent; the official lipdub-2-stage wires from `cropped[2]`).
+
+```bash
+# Sanity check what would be submitted
+COMFY_URL=… python3 comfy_graph.py dump ia2v \
+  --image anchor.png --audio slice.mp3 --prompt "..." --seconds 5 \
+  --ic_loras "..." --ic_lora_reference_video cond.mp4 \
+  > /tmp/wf.json
+
+# Count IC-LoRA nodes, samplers, etc.
+python3 -c "import json; d=json.load(open('/tmp/wf.json'));
+from collections import Counter;
+print(Counter(n['class_type'] for n in d.values()))"
 ```
 
 ### comfy_run.py — Workflow runner
@@ -361,7 +439,8 @@ places them in the right spot.
 - **Upscaler (between passes):** `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` via `LatentUpscaleModelLoader`
 - **LoRA:** `ltx-2.3-22b-distilled-lora-384.safetensors` at **strength 0.6** — applied on ALL flows (t2v/i2v/ia2v/flf2v). This reproduces the distilled checkpoint behaviour on top of the dev-fp8 checkpoint we have installed; without it the 8-step schedule under-denoises and output is badly blurred.
 - **Pass 1 (coarse, 9 steps):** `euler_ancestral_cfg_pp` + ManualSigmas `"1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"`, raw `LTXVConditioning`
-- **Between passes:** Separate AV → `LTXVLatentUpsampler` → re-apply image via `LTXVImgToVideoInplace(strength=refine_guide_strength, default 0.3)` (i2v/ia2v only) → re-concat with audio → `LTXVCropGuides` on coarse video latent for conditioning. Historical `strength=1.0` hard-locked the opening frames and is no longer used.
+- **Between passes:** Separate AV → `LTXVCropGuides` on the post-pass-1 video latent → `LTXVLatentUpsampler` **on the cropped latent** (NOT on `sep[0]` — see the gotcha below) → re-apply image via `LTXVImgToVideoInplace(strength=refine_guide_strength, default 0.3)` (i2v/ia2v only) → re-concat with audio. The cropped conditioning (LTXVCropGuides output) is what feeds pass-2's CFGGuider.
+  - ⚠️ **Gotcha — upsample from CROPPED latent, not separated.** When pass-1 added conditioning frames via `LTXVAddGuide` / `LTXAddVideoICLoRAGuide` (IC-LoRA / id_branch / multiguide / flf2v), the post-pass-1 latent's temporal dim is `requested_length + cond_frames` (e.g. 32 frames for a 16-frame request with 16 cond frames). `LTXVCropGuides` strips the cond frames from BOTH the cond's pos/neg metadata AND the latent (it slices `latent_image[:, :, :-num_keyframes]`). If `LTXVLatentUpsampler` is wired from the pre-crop `sep[0]` instead of `cropped[2]`, pass-2 refines a 2x-temporal latent → 2x-duration glitched output. The basic ia2v 2-stage workflow (no AddGuide) gets away with `sep[0]` because it has no cond frames to strip; the official lipdub-2-stage IC-LoRA workflow correctly wires from `cropped[2]`. Fixed in `ltx2._upsample_between` 2026-05-16 after the stable-altitude v8 "glitchy squares" arc.
 - **Pass 2 (refine, 4 steps):** `euler_cfg_pp` + ManualSigmas `"0.85, 0.7250, 0.4219, 0.0"`, cropped conditioning
 - **Always AV-concat:** All three variants (t2v/i2v/ia2v) use `LTXVConcatAVLatent`/`LTXVSeparateAVLatent`. For non-audio variants, `LTXVEmptyLatentAudio` provides a blank audio side. This keeps one graph shape.
 - **Length:** `(seconds × fps)` rounded to `≡ 1 (mod 8)`
@@ -445,27 +524,82 @@ sessions_spawn({
 
 The subagent runs inside the same shared sandbox, does the long gen + delivery, and auto-announces completion to the main session when done. You (the main agent) are free to continue talking.
 
-## Recovery from client-side timeout
+## Debugging an output that looks wrong
 
-`comfy_graph.py` polls `/history/<prompt_id>` every 2 seconds with a per-request 15s timeout. If the bridge or the server hiccups long enough for the polling deadline to expire — or if the comfy server restarts mid-render and wipes its history — the client raises `TimeoutError("Timed out after Ns")` even though the GPU may have finished the render and saved the file.
+Server-side validation (empty outputs, AssertionErrors, missing nodes) is covered by the `comfy_query.py history <id>` workflow in the comfy_query section above. This section is for the harder case: the workflow ran to completion, the file was saved, but the video looks **wrong** (glitchy noise, doubled duration, wrong identity, conditioning ignored, etc.).
 
-Before re-running an expensive scene, check the server directly with `comfy_query.py`:
+### Step 1 — extract a middle frame and look at it
+
+Before re-rendering or reading code, check what was actually produced. The `imageio_ffmpeg` Python wheel ships a static ffmpeg binary so this works on any host with `uv` available:
 
 ```bash
-# Is anything running / queued?
-COMFY_URL=https://comfyui-bridge.tail74c072.ts.net:8189 \
-  python3 comfy_query.py queue
-
-# Did the prompt complete? (history is keyed by prompt_id, printed at start of run)
-COMFY_URL=… python3 comfy_query.py history <prompt_id>
-
-# Pull the file directly if the server still has it:
-curl -O "https://comfyui-bridge.tail74c072.ts.net:8189/view?filename=<name>&type=output"
+uv run --with imageio-ffmpeg python3 -c "
+import subprocess, imageio_ffmpeg as iio, re
+ff = iio.get_ffmpeg_exe()
+r = subprocess.run([ff, '-i', 'out.mp4'], capture_output=True, text=True)
+m = re.search(r'Duration: (\S+)', r.stderr); d = re.search(r'(\d{2,4})x(\d{2,4})', r.stderr)
+print(f'duration={m.group(0)}, dims={d.group(0)}')
+subprocess.run([ff, '-ss', '2.5', '-i', 'out.mp4', '-frames:v', '1', '-y', 'mid.png'], capture_output=True)
+"
 ```
 
-Useful even when history is empty — the queue still tells you whether the GPU is running, idle, or has the job pending.
+**What the frame tells you:**
 
-If the server was restarted (history empty, queue empty, file not at `/view?filename=…&type=output`), the render genuinely needs to be re-run. Otherwise you can recover the asset for free.
+| Symptom | Likely cause |
+|---|---|
+| Solid noise / raw latent grid pattern | Pass-2 sampling on a latent with conditioning frames not stripped — see the upsample-from-cropped gotcha in the LTX-2.3 architecture section |
+| Duration is exactly 2× requested | Same as above: cond frames in the upsampled latent get sampled and decoded as if they were content |
+| First frame OK, rest drifts to noise | Pass-1 worked but the refine pass lost the conditioning (model + cond mismatch — e.g. IC-LoRA model with cropped-clean cond) |
+| Wrong identity / character | `image_ref` was passed but `condition_only=False` baked it into the latent and IC-LoRA fought for spatial coverage — use `condition_only=True` for IC-LoRA flows |
+| Left-half is right, right-half is noise | `ImagePrepForICLora` left-bias bug — for video references, use `ResizeImageMaskNode "scale to multiple" 32` instead (already fixed) |
+| Output is `guide_frames` longer than requested | `strip_guides_cond` not passed to `_decode_and_save`, OR passed but the cond's `keyframe_idxs` was cleared upstream of the strip (e.g. crop already ran). Check that the cond going into the final crop still has `keyframe_idxs` |
+
+### Step 2 — compare your workflow against the official Lightricks examples
+
+The single most useful debugging tool: **diff your generated workflow JSON against the official example workflow for the same flow shape**. Official examples are at `https://github.com/Lightricks/ComfyUI-LTXVideo/tree/master/example_workflows/2.3`:
+
+| Flow | Use this example as reference |
+|---|---|
+| t2v / i2v / ia2v single-stage | `LTX-2.3_T2V_I2V_Single_Stage_Distilled_Full.json` |
+| t2v / i2v / ia2v 2-stage refine | `LTX-2.3_T2V_I2V_Two_Stage_Distilled.json` |
+| IC-LoRA HDR (single-stage) | `LTX-2.3_ICLoRA_HDR_Distilled.json` |
+| IC-LoRA Union-Control (single-stage) | `LTX-2.3_ICLoRA_Union_Control_Distilled.json` |
+| IC-LoRA Motion-Track (single-stage) | `LTX-2.3_ICLoRA_Motion_Track_Distilled.json` |
+| **IC-LoRA 2-stage** | `LTX-2.3_ICLoRA_Lipdub_Two_Stage_Distilled.json` ← the only 2-stage IC-LoRA example |
+
+Workflow:
+
+```bash
+# 1. Dump what your script produces (API format)
+python3 comfy_graph.py dump <op> <args> > /tmp/ours.json
+
+# 2. Fetch the official UI-format example
+gh api repos/Lightricks/ComfyUI-LTXVideo/contents/example_workflows/2.3/LTX-2.3_ICLoRA_Lipdub_Two_Stage_Distilled.json \
+  --jq '.content' | base64 -d > /tmp/official.json
+
+# 3. Diff the topology. The two formats are different (API vs UI), so trace
+#    node-by-node which output feeds which input. Focus on the SAMPLER's
+#    inputs (latent_image, guider) and the upstream chain feeding them.
+```
+
+The 2026-05-16 "glitchy squares" fix was found exactly this way: our `_upsample_between` wired `LTXVLatentUpsampler.samples` from the post-pass-1 separated latent (`sep[0]`); the official lipdub-2-stage workflow wires it from `LTXVCropGuides.latent` output (`cropped[2]`). That single mis-wire caused the pass-2 sampler to refine 2× as many latent frames as the user requested, producing the doubled-duration glitched output.
+
+### Step 3 — re-run with the smallest possible reproduction
+
+Don't re-render the full project. Pull one short scene out of the project YAML, render it standalone via `comfy_graph.py ia2v` directly with all the same flags, and iterate on that. A 4-second scene takes 1-3 minutes vs an hour for the full music video.
+
+### Step 4 — bisect against working configurations
+
+If a parameter change broke the output, render with the LAST KNOWN GOOD params alongside the broken ones (same prompt, same image, same audio). When both sit side-by-side in the output directory, the structural difference is usually obvious.
+
+The matrix that works on the LTX-2.3 server today (as of 2026-05-16):
+
+| `fast` | IC-LoRA | Works |
+|---|---|---|
+| true  | no  | ✓ single-pass |
+| true  | yes | ✓ single-pass at requested dims (use 2× dims if you want high-res from IC-LoRA + Union-Control) |
+| false | no  | ✓ standard 2-stage refine |
+| false | yes | ✓ 2-stage refine (after the cropped-latent fix landed 2026-05-16) |
 
 ## Troubleshooting
 
