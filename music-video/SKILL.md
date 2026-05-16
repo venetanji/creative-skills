@@ -122,6 +122,25 @@ music_video.py all --no-gate <spec>    # skip both gates, full autopilot
 Restart-safe throughout: anything already on disk is skipped. Iterate
 individual scenes with `scene N song.yaml`.
 
+## Day-1 decisions (lock these before step 7)
+
+A few choices propagate into every downstream prompt and every render. Flipping
+them mid-pipeline forces you to throw away anchors and redo them. Settle these
+up front, when only `song.yaml` exists and no GPU time has been spent:
+
+| Decision | Where it lives | Why it has to be early |
+|---|---|---|
+| **Aspect & resolution** | `video.resolution: [w, h]` | Hard-coded into every anchor prompt ("vertical 9:16" vs "16:9 widescreen") and every render. Switching aspect after `anchors` invalidates every PNG. Common picks: `[1024, 576]` (16:9 broadcast), `[576, 1024]` (9:16 vertical / social). Must be multiples of 32. |
+| **Cast** | `subjects:` + reference photos in the project dir | Each named subject (`operator`, `dancers`, `interviewer`, …) needs (a) a one-line description token and (b) at least one reference image so per-scene `i2i`/`i2i2` anchors can lock identity. Adding a character later means re-rolling every scene they appear in. |
+| **Canonical settings** | `sheets/<setting>.png` (project convention) + `scenes[].anchor.references` | Pre-render one PNG per recurring location (e.g. main stage, b-stage, exterior). Scene anchors `i2i2` against [character, setting] so the world stays visually constant. Without canonical setting refs, each scene anchor invents its own version of the place. |
+| **Lipsync mode** | `video.lipsync_audio` | If you want LTX to lipsync against a vocal-forward remix instead of the mastered mix, supply it now. Switching mid-project means re-rendering every singing scene. |
+| **Number of suno variants** | `suno.runs` (× 2 variants per run) | More variants = more parallel `final_vN.mp4` outputs at assembly time, but every variant runs against the same scene visuals. Setting this *up* later is cheap; setting it *down* means you waste suno credits. |
+| **Quality gates** | `gate_confirm_song`, `gate_confirm_anchors` | Default `true` (recommended). Flip to `false` only when you're fully confident; bad gate-skips waste hours of LTX time on bad anchors. |
+
+Anything else (per-scene prompts, camera LoRAs, transitions on/off, individual
+anchor tweaks) is cheap to iterate on later — those only re-render one scene
+at a time and don't propagate.
+
 ## Command index
 
 Every step of the pipeline maps to one CLI subcommand in
