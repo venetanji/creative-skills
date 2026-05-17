@@ -1403,8 +1403,13 @@ def cmd_transitions(spec: dict, project: Path) -> None:
                "--prev_video_song_start_sec", f"{float(a['start_sec']):.3f}",
                "--next_video_song_start_sec", f"{float(b['start_sec']):.3f}",
                "--prev_video_buffer", f"{tail_buffer:.3f}",
-               "--mask_start_sec", "1.0",
-               "--mask_end_sec", "4.0",
+               # Mask boundaries scale with transition duration. Previously
+               # hardcoded for 4s transitions ([1.0, 4.0]) — broke shorter
+               # boundaries (mask_end > duration is undefined). Now: regen
+               # window starts after A-guide (guide_sec) and ends at the
+               # transition's tail. B-side anchors land inside this region.
+               "--mask_start_sec", f"{guide_sec:.3f}",
+               "--mask_end_sec", f"{dur:.3f}",
                "--timeout", "1800"]
         # Inherit fast/slow mode from the same knob the scene renders use.
         # Without this transitions silently render full 2-pass (LTXVLatentUpsampler
