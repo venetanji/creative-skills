@@ -1,0 +1,72 @@
+{
+  "text": "您在下一頁\n以下哪一項最能描述您過去三個月的就業狀況？\n全職工作\n兼職工作\n失業並正在尋找工作\n家務照顧者或全職家長\n學生\n退休\n其他 Other\n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "以下哪一項最能描述您過去三個月的就業狀況？",
+      "choices": [
+        "全職工作",
+        "全職工作",
+        "兼職工作",
+        "兼職工作",
+        "失業並正在尋找工作",
+        "失業並正在尋找工作",
+        "家務照顧者或全職家長",
+        "家務照顧者或全職家長",
+        "學生",
+        "學生",
+        "退休",
+        "退休",
+        "其他 Other",
+        "其他 Other"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID92",
+          "id": "QR~QID92~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID92",
+          "id": "QR~QID92~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID92",
+          "id": "QR~QID92~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID92",
+          "id": "QR~QID92~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID92",
+          "id": "QR~QID92~5"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID92",
+          "id": "QR~QID92~6"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID92",
+          "id": "QR~QID92~7"
+        },
+        {
+          "type": "text",
+          "name": "QR~QID92~7~TEXT",
+          "id": "QR~QID92~7~TEXT"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID92-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}

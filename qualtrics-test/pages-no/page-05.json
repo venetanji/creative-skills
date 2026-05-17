@@ -1,0 +1,351 @@
+{
+  "text": "您在下一頁 \n工作地區 Working District\n中西區 Central and Western\n灣仔區 Wai Chai\n東區 Eastern\n南區 Southern\n油尖旺區 Yau Tsim Mong\n深水埗區 Shum Shai Po\n九龍城區 Kowloon City\n黃大仙區 Wong Tai Sin\n觀塘區 Kwun Tong\n葵青區 Kwai Tsing\n荃灣區 Tsuen Wan\n屯門區 Tuen Mun\n元朗區 Yuen Long\n北區 North\n大埔區 Tai Po\n沙田區 Sha Tin\n西貢區 Sai Kung\n離島區 Islands\n您目前的婚姻狀況是\n已婚\n與伴侶同住\n喪偶\n離婚／分居\n從未結婚\n在您的住戶中，有多少人至少有一半時間在此居住或留宿？\n您與同住／留宿人士的關係是？\n父母 Parent(s)\n兄弟姊妹 Sibling(s)\n配偶／伴侶 Spouse / Partner\n子女 Child(ren)\n祖父母／外祖父母 Grandparent(s)\n其他親屬（例如：表／堂兄弟姊妹、叔叔、伯伯、舅舅、阿姨、姑姑等） Other relative (e.g., cousin, uncle, aunt)\n朋友 Friend(s)\n照顧者／家庭傭工 Caregiver / Domestic helper\n獨居（我自己一個人住） Alone (I live by myself)\n其他（請註明） Other (Please specify)\n請問你受醫療保險保障嗎？\n是\n否\n您是否有任何已診斷或已知的疾病／醫療狀況？\n是\n否\n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "工作地區 Working District",
+      "choices": [
+        "中西區 Central and Western",
+        "中西區 Central and Western",
+        "灣仔區 Wai Chai",
+        "灣仔區 Wai Chai",
+        "東區 Eastern",
+        "東區 Eastern",
+        "南區 Southern",
+        "南區 Southern",
+        "油尖旺區 Yau Tsim Mong",
+        "油尖旺區 Yau Tsim Mong",
+        "深水埗區 Shum Shai Po",
+        "深水埗區 Shum Shai Po",
+        "九龍城區 Kowloon City",
+        "九龍城區 Kowloon City",
+        "黃大仙區 Wong Tai Sin",
+        "黃大仙區 Wong Tai Sin",
+        "觀塘區 Kwun Tong",
+        "觀塘區 Kwun Tong",
+        "葵青區 Kwai Tsing",
+        "葵青區 Kwai Tsing",
+        "荃灣區 Tsuen Wan",
+        "荃灣區 Tsuen Wan",
+        "屯門區 Tuen Mun",
+        "屯門區 Tuen Mun",
+        "元朗區 Yuen Long",
+        "元朗區 Yuen Long",
+        "北區 North",
+        "北區 North",
+        "大埔區 Tai Po",
+        "大埔區 Tai Po",
+        "沙田區 Sha Tin",
+        "沙田區 Sha Tin",
+        "西貢區 Sai Kung",
+        "西貢區 Sai Kung",
+        "離島區 Islands",
+        "離島區 Islands"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~21"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~22"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~23"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~24"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~25"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~26"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~27"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~28"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~29"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~30"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~31"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~32"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~33"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~34"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~35"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~36"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID172",
+          "id": "QR~QID172~37"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID172-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "您目前的婚姻狀況是",
+      "choices": [
+        "已婚",
+        "已婚",
+        "與伴侶同住",
+        "與伴侶同住",
+        "喪偶",
+        "喪偶",
+        "離婚／分居",
+        "離婚／分居",
+        "從未結婚",
+        "從未結婚"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID94",
+          "id": "QR~QID94~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID94",
+          "id": "QR~QID94~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID94",
+          "id": "QR~QID94~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID94",
+          "id": "QR~QID94~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID94",
+          "id": "QR~QID94~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID94-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "在您的住戶中，有多少人至少有一半時間在此居住或留宿？",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID95~TEXT",
+          "id": "QR~QID95"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID95-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "您與同住／留宿人士的關係是？",
+      "choices": [
+        "父母 Parent(s)",
+        "父母 Parent(s)",
+        "兄弟姊妹 Sibling(s)",
+        "兄弟姊妹 Sibling(s)",
+        "配偶／伴侶 Spouse / Partner",
+        "配偶／伴侶 Spouse / Partner",
+        "子女 Child(ren)",
+        "子女 Child(ren)",
+        "祖父母／外祖父母 Grandparent(s)",
+        "祖父母／外祖父母 Grandparent(s)",
+        "其他親屬（例如：表／堂兄弟姊妹、叔叔、伯伯、舅舅、阿姨、姑姑等） Other relative (e.g., cousin, uncle, aunt)",
+        "其他親屬（例如：表／堂兄弟姊妹、叔叔、伯伯、舅舅、阿姨、姑姑等） Other relative (e.g., cousin, uncle, aunt)",
+        "朋友 Friend(s)",
+        "朋友 Friend(s)",
+        "照顧者／家庭傭工 Caregiver / Domestic helper",
+        "照顧者／家庭傭工 Caregiver / Domestic helper",
+        "獨居（我自己一個人住） Alone (I live by myself)",
+        "獨居（我自己一個人住） Alone (I live by myself)",
+        "其他（請註明） Other (Please specify)",
+        "其他（請註明） Other (Please specify)"
+      ],
+      "inputs": [
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~1",
+          "id": "QR~QID26~1"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~2",
+          "id": "QR~QID26~2"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~3",
+          "id": "QR~QID26~3"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~4",
+          "id": "QR~QID26~4"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~5",
+          "id": "QR~QID26~5"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~6",
+          "id": "QR~QID26~6"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~7",
+          "id": "QR~QID26~7"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~8",
+          "id": "QR~QID26~8"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~9",
+          "id": "QR~QID26~9"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID26~10",
+          "id": "QR~QID26~10"
+        },
+        {
+          "type": "text",
+          "name": "QR~QID26~10~TEXT",
+          "id": "QR~QID26~10~TEXT"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID26-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "請問你受醫療保險保障嗎？",
+      "choices": [
+        "是",
+        "是",
+        "否",
+        "否"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID180",
+          "id": "QR~QID180~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID180",
+          "id": "QR~QID180~2"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID180-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "您是否有任何已診斷或已知的疾病／醫療狀況？",
+      "choices": [
+        "是",
+        "是",
+        "否",
+        "否"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID179",
+          "id": "QR~QID179~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID179",
+          "id": "QR~QID179~2"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID179-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}

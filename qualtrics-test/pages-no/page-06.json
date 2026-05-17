@@ -1,0 +1,168 @@
+{
+  "text": "您在下一頁\n已診斷的疾病／醫療狀況（如有; 如已康復，請註明）：Diagnosed Medical Condition(s) (if any; if recovered, please specify):\n高膽固醇 High cholesterol\n高血壓 High blood pressure\n糖尿病 Diabetes\n關節炎 Arthritis\n腸胃病 Gastroenteritis\n心臟病 Heart Disease\n中風 Stroke\n抑鬱症 Depression\n子宮頸癌 Cervical cancer\n其他癌症 Other types of cancer\n其他 Others\n其他說明 （如已康復）\n緊急／備用聯絡人姓名 （如無法聯絡您時，我們可聯絡的人）\n緊急／備用聯絡人電話號碼 \n與緊急／備用聯絡人的關係 \n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "已診斷的疾病／醫療狀況（如有; 如已康復，請註明）：Diagnosed Medical Condition(s) (if any; if recovered, please specify):",
+      "choices": [
+        "高膽固醇 High cholesterol",
+        "高膽固醇 High cholesterol",
+        "高血壓 High blood pressure",
+        "高血壓 High blood pressure",
+        "糖尿病 Diabetes",
+        "糖尿病 Diabetes",
+        "關節炎 Arthritis",
+        "關節炎 Arthritis",
+        "腸胃病 Gastroenteritis",
+        "腸胃病 Gastroenteritis",
+        "心臟病 Heart Disease",
+        "心臟病 Heart Disease",
+        "中風 Stroke",
+        "中風 Stroke",
+        "抑鬱症 Depression",
+        "抑鬱症 Depression",
+        "子宮頸癌 Cervical cancer",
+        "子宮頸癌 Cervical cancer",
+        "其他癌症 Other types of cancer",
+        "其他癌症 Other types of cancer",
+        "其他 Others",
+        "其他 Others",
+        "其他說明 （如已康復）",
+        "其他說明 （如已康復）"
+      ],
+      "inputs": [
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~4",
+          "id": "QR~QID27~4"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~5",
+          "id": "QR~QID27~5"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~6",
+          "id": "QR~QID27~6"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~7",
+          "id": "QR~QID27~7"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~8",
+          "id": "QR~QID27~8"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~9",
+          "id": "QR~QID27~9"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~10",
+          "id": "QR~QID27~10"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~11",
+          "id": "QR~QID27~11"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~12",
+          "id": "QR~QID27~12"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~13",
+          "id": "QR~QID27~13"
+        },
+        {
+          "type": "text",
+          "name": "QR~QID27~13~TEXT",
+          "id": "QR~QID27~13~TEXT"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~14",
+          "id": "QR~QID27~14"
+        },
+        {
+          "type": "text",
+          "name": "QR~QID27~14~TEXT",
+          "id": "QR~QID27~14~TEXT"
+        },
+        {
+          "type": "checkbox",
+          "name": "QR~QID27~15",
+          "id": "QR~QID27~15"
+        },
+        {
+          "type": "text",
+          "name": "QR~QID27~15~TEXT",
+          "id": "QR~QID27~15~TEXT"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID27-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "緊急／備用聯絡人姓名 （如無法聯絡您時，我們可聯絡的人）",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID19~TEXT",
+          "id": "QR~QID19"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID19-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "緊急／備用聯絡人電話號碼",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID20~TEXT",
+          "id": "QR~QID20"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID20-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "與緊急／備用聯絡人的關係",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID21~TEXT",
+          "id": "QR~QID21"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID21-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+您在下一頁
+已診斷的疾病／醫療狀況（如有; 如已康復，請註明）：Diagnosed Medical Condition(s) (if any; if recovered, please specify):
+高膽固醇 High cholesterol
+高血壓 High blood pressure
+糖尿病 Diabetes
+關節炎 Arthritis
+腸胃病 Gastroenteritis
+心臟病 Heart Disease
+中風 Stroke
+抑鬱症 Depression
+子宮頸癌 Cervical cancer
+其他癌症 Other types of cancer
+其他 Others
+其他說明 （如已康復）
+緊急／備用聯絡人姓名 （如無法聯絡您時，我們可聯絡的人）
+緊急／備用聯絡人電話號碼 
+與緊急／備用聯絡人的關係 
+由 Qualtrics 提供支援

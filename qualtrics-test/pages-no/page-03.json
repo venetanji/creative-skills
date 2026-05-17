@@ -1,0 +1,403 @@
+{
+  "text": "您在下一頁 \n關於參與者\n\n以下問題有助於研究團隊確認參與者的類型、整理研究紀錄，以及在研究報告中描述研究群組。\n部分問題可能會用來決定哪些問卷或篩選活動的內容與您相關。\n英文姓氏 e.g. Chan\n英文名字 e.g. Tai Man Tom\n姓氏 (中文）例如：陳\n名字（中文）例如：大文\n電郵地址\n電話號碼\n居住地區\n中西區 Central and Western\n灣仔區 Wai Chai\n東區 Eastern\n南區 Southern\n油尖旺區 Yau Tsim Mong\n深水埗區 Shum Shai Po\n九龍城區 Kowloon City\n黃大仙區 Wong Tai Sin\n觀塘區 Kwun Tong\n葵青區 Kwai Tsing\n荃灣區 Tsuen Wan\n屯門區 Tuen Mun\n元朗區 Yuen Long\n北區 North\n大埔區 Tai Po\n沙田區 Sha Tin\n西貢區 Sai Kung\n離島區 Islands\n您的年齡是?\n您的性別是？\n男性\n女性\n不願透露\n族裔 Ethnicity\n漢族華人 Chinese\n印尼人 Indonesian\n菲律賓人 Filipino\n白人 White\n印度人 Indian\n巴基斯坦人 Pakistani\n尼泊爾人 Nepalese\n日本人 Japanese\n泰國人 Thai\n其他亞洲人 Other Asian\n其他 Others\n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "關於參與者\n\n以下問題有助於研究團隊確認參與者的類型、整理研究紀錄，以及在研究報告中描述研究群組。\n部分問題可能會用來決定哪些問卷或篩選活動的內容與您相關。",
+      "choices": [],
+      "inputs": [],
+      "errors": ""
+    },
+    {
+      "qtxt": "英文姓氏 e.g. Chan",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID10~TEXT",
+          "id": "QR~QID10"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID10-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "英文名字 e.g. Tai Man Tom",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID12~TEXT",
+          "id": "QR~QID12"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID12-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "姓氏 (中文）例如：陳",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID13~TEXT",
+          "id": "QR~QID13"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID13-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "名字（中文）例如：大文",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID14~TEXT",
+          "id": "QR~QID14"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID14-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "電郵地址",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID15~TEXT",
+          "id": "QR~QID15"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID15-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "電話號碼",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID18~TEXT",
+          "id": "QR~QID18"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID18-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "居住地區",
+      "choices": [
+        "中西區 Central and Western",
+        "中西區 Central and Western",
+        "灣仔區 Wai Chai",
+        "灣仔區 Wai Chai",
+        "東區 Eastern",
+        "東區 Eastern",
+        "南區 Southern",
+        "南區 Southern",
+        "油尖旺區 Yau Tsim Mong",
+        "油尖旺區 Yau Tsim Mong",
+        "深水埗區 Shum Shai Po",
+        "深水埗區 Shum Shai Po",
+        "九龍城區 Kowloon City",
+        "九龍城區 Kowloon City",
+        "黃大仙區 Wong Tai Sin",
+        "黃大仙區 Wong Tai Sin",
+        "觀塘區 Kwun Tong",
+        "觀塘區 Kwun Tong",
+        "葵青區 Kwai Tsing",
+        "葵青區 Kwai Tsing",
+        "荃灣區 Tsuen Wan",
+        "荃灣區 Tsuen Wan",
+        "屯門區 Tuen Mun",
+        "屯門區 Tuen Mun",
+        "元朗區 Yuen Long",
+        "元朗區 Yuen Long",
+        "北區 North",
+        "北區 North",
+        "大埔區 Tai Po",
+        "大埔區 Tai Po",
+        "沙田區 Sha Tin",
+        "沙田區 Sha Tin",
+        "西貢區 Sai Kung",
+        "西貢區 Sai Kung",
+        "離島區 Islands",
+        "離島區 Islands"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~21"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~22"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~23"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~24"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~25"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~26"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~27"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~28"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~29"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~30"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~31"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~32"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~33"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~34"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~35"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~36"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID168",
+          "id": "QR~QID168~37"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID168-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "您的年齡是?",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID11~TEXT",
+          "id": "QR~QID11"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID11-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "您的性別是？",
+      "choices": [
+        "男性",
+        "男性",
+        "女性",
+        "女性",
+        "不願透露",
+        "不願透露"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID90",
+          "id": "QR~QID90~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID90",
+          "id": "QR~QID90~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID90",
+          "id": "QR~QID90~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID90-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "族裔 Ethnicity",
+      "choices": [
+        "漢族華人 Chinese",
+        "漢族華人 Chinese",
+        "印尼人 Indonesian",
+        "印尼人 Indonesian",
+        "菲律賓人 Filipino",
+        "菲律賓人 Filipino",
+        "白人 White",
+        "白人 White",
+        "印度人 Indian",
+        "印度人 Indian",
+        "巴基斯坦人 Pakistani",
+        "巴基斯坦人 Pakistani",
+        "尼泊爾人 Nepalese",
+        "尼泊爾人 Nepalese",
+        "日本人 Japanese",
+        "日本人 Japanese",
+        "泰國人 Thai",
+        "泰國人 Thai",
+        "其他亞洲人 Other Asian",
+        "其他亞洲人 Other Asian",
+        "其他 Others",
+        "其他 Others"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~5"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~6"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~7"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~8"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~9"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~10"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~11"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~12"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~13"
+        },
+        {
+          "type": "text",
+          "name": "QR~QID22~13~TEXT",
+          "id": "QR~QID22~13~TEXT"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID22",
+          "id": "QR~QID22~14"
+        },
+        {
+          "type": "text",
+          "name": "QR~QID22~14~TEXT",
+          "id": "QR~QID22~14~TEXT"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID22-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}

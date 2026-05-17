@@ -1,0 +1,640 @@
+{
+  "text": "您在下一頁 \n健康樂齡問卷\n\n請閱讀以下句子，並選擇最符合您的經驗與情況。\n\n1. 您吸煙嗎？\n吸煙\n已戒煙\n不吸煙\n2. 您每週會參與至少一項社交活動嗎？\n\n（例如：參與宗教活動、聚餐/看電影/做運動、日間/短途旅行、玩卡牌/遊戲、長者中心/社交團體活動等）\n\n不會\n會\n3. 您每週會參與至少一項您認為有意義的活動嗎？\n\n（例如：嗜好（如園藝、繪畫）、煮飯、購物、有薪工作或店鋪經營、社區義工服務等）\n\n不會\n會\n4. 在過去一星期，您多久會進行一次讓自己流汗的運動？\n很少\n有時\n經常\n5. 您會因身體健康狀況受到限制而對下列其中一種情況感到吃力嗎？\n • 步行數個街口（約100-200公尺）或\n • 拿著超市購買的物品回家\n非常不吃力\n有少許吃力\n十分吃力\n請就第6至7題，按您的主觀感受回答發生該情況的頻率 :\n6. 您有多少時候因出現身體健康狀況而阻礙了工作或進行其他活動？\n\n從不\n甚少\n間中\n經常\n總是\n7. 您有多少時候因出現身體健康狀況或情緒問題而阻礙了您參與社交活動？\n從不\n甚少\n間中\n經常\n總是\n8. 您有多少位親戚朋友可讓您感到自在，能談論私事和/或尋求幫助？\n0\n1\n2\n3\n4\n5\n6位或以上\n9. 您如何評價您所接受的醫療服務的整體質素？\n差\n尚可\n好\n很好\n非常好\n10. 過去一年裡，您覺得自己是個快樂的人嗎？\n從不\n甚少\n間中\n經常\n總是\n11. 您會忘記赴約嗎？\n（例如：預約就診，與朋友聚會等）\n\n從未\n甚少\n間中\n經常\n幾乎總是\n12. 「隨著年齡增長，我覺得自己越來越沒有用。」\n同意\n不同意\n13. 您對自己的思考能力滿意嗎？\n非常不滿意\n不滿意\n一般\n滿意\n極滿意\n14. 與同齡人相比，您認為自己現時的心理健康狀況如何？\n差\n尚可\n好\n很好\n非常好\n15. 整體而言，您對自己在目前年齡段的身心健康狀況感覺如何？\n差\n尚可\n好\n很好\n非常好\n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "健康樂齡問卷\n\n請閱讀以下句子，並選擇最符合您的經驗與情況。",
+      "choices": [],
+      "inputs": [],
+      "errors": ""
+    },
+    {
+      "qtxt": "1. 您吸煙嗎？",
+      "choices": [
+        "吸煙",
+        "吸煙",
+        "已戒煙",
+        "已戒煙",
+        "不吸煙",
+        "不吸煙"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID28",
+          "id": "QR~QID28~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID28",
+          "id": "QR~QID28~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID28",
+          "id": "QR~QID28~3"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID28-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "2. 您每週會參與至少一項社交活動嗎？\n\n（例如：參與宗教活動、聚餐/看電影/做運動、日間/短途旅行、玩卡牌/遊戲、長者中心/社交團體活動等）",
+      "choices": [
+        "不會",
+        "不會",
+        "會",
+        "會"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID29",
+          "id": "QR~QID29~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID29",
+          "id": "QR~QID29~2"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID29-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "3. 您每週會參與至少一項您認為有意義的活動嗎？\n\n（例如：嗜好（如園藝、繪畫）、煮飯、購物、有薪工作或店鋪經營、社區義工服務等）",
+      "choices": [
+        "不會",
+        "不會",
+        "會",
+        "會"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID30",
+          "id": "QR~QID30~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID30",
+          "id": "QR~QID30~2"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID30-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "4. 在過去一星期，您多久會進行一次讓自己流汗的運動？",
+      "choices": [
+        "很少",
+        "很少",
+        "有時",
+        "有時",
+        "經常",
+        "經常"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID31",
+          "id": "QR~QID31~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID31",
+          "id": "QR~QID31~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID31",
+          "id": "QR~QID31~3"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID31-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "5. 您會因身體健康狀況受到限制而對下列其中一種情況感到吃力嗎？\n • 步行數個街口（約100-200公尺）或\n • 拿著超市購買的物品回家",
+      "choices": [
+        "非常不吃力",
+        "非常不吃力",
+        "有少許吃力",
+        "有少許吃力",
+        "十分吃力",
+        "十分吃力"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID32",
+          "id": "QR~QID32~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID32",
+          "id": "QR~QID32~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID32",
+          "id": "QR~QID32~3"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID32-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "請就第6至7題，按您的主觀感受回答發生該情況的頻率 :\n6. 您有多少時候因出現身體健康狀況而阻礙了工作或進行其他活動？",
+      "choices": [
+        "從不",
+        "從不",
+        "甚少",
+        "甚少",
+        "間中",
+        "間中",
+        "經常",
+        "經常",
+        "總是",
+        "總是"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID33",
+          "id": "QR~QID33~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID33",
+          "id": "QR~QID33~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID33",
+          "id": "QR~QID33~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID33",
+          "id": "QR~QID33~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID33",
+          "id": "QR~QID33~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID33-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "7. 您有多少時候因出現身體健康狀況或情緒問題而阻礙了您參與社交活動？",
+      "choices": [
+        "從不",
+        "從不",
+        "甚少",
+        "甚少",
+        "間中",
+        "間中",
+        "經常",
+        "經常",
+        "總是",
+        "總是"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID34",
+          "id": "QR~QID34~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID34",
+          "id": "QR~QID34~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID34",
+          "id": "QR~QID34~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID34",
+          "id": "QR~QID34~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID34",
+          "id": "QR~QID34~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID34-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "8. 您有多少位親戚朋友可讓您感到自在，能談論私事和/或尋求幫助？",
+      "choices": [
+        "0",
+        "0",
+        "1",
+        "1",
+        "2",
+        "2",
+        "3",
+        "3",
+        "4",
+        "4",
+        "5",
+        "5",
+        "6位或以上",
+        "6位或以上"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID35",
+          "id": "QR~QID35~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID35",
+          "id": "QR~QID35~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID35",
+          "id": "QR~QID35~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID35",
+          "id": "QR~QID35~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID35",
+          "id": "QR~QID35~5"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID35",
+          "id": "QR~QID35~6"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID35",
+          "id": "QR~QID35~7"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID35-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "9. 您如何評價您所接受的醫療服務的整體質素？",
+      "choices": [
+        "差",
+        "差",
+        "尚可",
+        "尚可",
+        "好",
+        "好",
+        "很好",
+        "很好",
+        "非常好",
+        "非常好"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID36",
+          "id": "QR~QID36~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID36",
+          "id": "QR~QID36~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID36",
+          "id": "QR~QID36~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID36",
+          "id": "QR~QID36~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID36",
+          "id": "QR~QID36~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID36-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "10. 過去一年裡，您覺得自己是個快樂的人嗎？",
+      "choices": [
+        "從不",
+        "從不",
+        "甚少",
+        "甚少",
+        "間中",
+        "間中",
+        "經常",
+        "經常",
+        "總是",
+        "總是"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID37",
+          "id": "QR~QID37~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID37",
+          "id": "QR~QID37~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID37",
+          "id": "QR~QID37~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID37",
+          "id": "QR~QID37~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID37",
+          "id": "QR~QID37~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID37-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "11. 您會忘記赴約嗎？\n（例如：預約就診，與朋友聚會等）",
+      "choices": [
+        "從未",
+        "從未",
+        "甚少",
+        "甚少",
+        "間中",
+        "間中",
+        "經常",
+        "經常",
+        "幾乎總是",
+        "幾乎總是"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID38",
+          "id": "QR~QID38~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID38",
+          "id": "QR~QID38~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID38",
+          "id": "QR~QID38~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID38",
+          "id": "QR~QID38~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID38",
+          "id": "QR~QID38~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID38-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "12. 「隨著年齡增長，我覺得自己越來越沒有用。」",
+      "choices": [
+        "同意",
+        "同意",
+        "不同意",
+        "不同意"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID39",
+          "id": "QR~QID39~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID39",
+          "id": "QR~QID39~2"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID39-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "13. 您對自己的思考能力滿意嗎？",
+      "choices": [
+        "非常不滿意",
+        "非常不滿意",
+        "不滿意",
+        "不滿意",
+        "一般",
+        "一般",
+        "滿意",
+        "滿意",
+        "極滿意",
+        "極滿意"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID40",
+          "id": "QR~QID40~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID40",
+          "id": "QR~QID40~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID40",
+          "id": "QR~QID40~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID40",
+          "id": "QR~QID40~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID40",
+          "id": "QR~QID40~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID40-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "14. 與同齡人相比，您認為自己現時的心理健康狀況如何？",
+      "choices": [
+        "差",
+        "差",
+        "尚可",
+        "尚可",
+        "好",
+        "好",
+        "很好",
+        "很好",
+        "非常好",
+        "非常好"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID41",
+          "id": "QR~QID41~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID41",
+          "id": "QR~QID41~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID41",
+          "id": "QR~QID41~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID41",
+          "id": "QR~QID41~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID41",
+          "id": "QR~QID41~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID41-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "15. 整體而言，您對自己在目前年齡段的身心健康狀況感覺如何？",
+      "choices": [
+        "差",
+        "差",
+        "尚可",
+        "尚可",
+        "好",
+        "好",
+        "很好",
+        "很好",
+        "非常好",
+        "非常好"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID42",
+          "id": "QR~QID42~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID42",
+          "id": "QR~QID42~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID42",
+          "id": "QR~QID42~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID42",
+          "id": "QR~QID42~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID42",
+          "id": "QR~QID42~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID42-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}

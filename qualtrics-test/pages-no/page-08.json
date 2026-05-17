@@ -1,0 +1,683 @@
+{
+  "text": "您在下一頁\n口腔健康對生活質量的影響程度\n\n 請根據你過去一年的情況回答下列問題:\n\n1. 您是否曾因為牙齒或口腔的問題而影響發音？\n很經常\n經常\n有時\n很少\n無\n2. 您是否曾因為牙齒或口腔的問題而感到自己的味覺變差？\n很經常\n經常\n有時\n很少\n無\n3.您口腔內是否曾出現過明顯疼痛？\n很經常\n經常\n有時\n很少\n無\n4. 您是否曾因為牙齒或口腔的問題而覺得吃什麼東西都不舒服？\n很經常\n經常\n有時\n很少\n無\n5. 您是否曾因為牙齒或口腔的問題而在其他人面前覺得不自在？\n很經常\n經常\n有時\n很少\n無\n6. 您是否曾因為牙齒或口腔的問題而感到緊張不安？\n很經常\n經常\n有時\n很少\n無\n7. 您是否曾因為牙齒或口腔的問題而對自己的飲食很不滿意？\n很經常\n經常\n有時\n很少\n無\n8. 您是否曾因為牙齒或口腔的問題而不得不在進餐時中途停下來？\n很經常\n經常\n有時\n很少\n無\n9. 您是否曾因為牙齒或口腔的問題而不能很好的休息？\n很經常\n經常\n有時\n很少\n無\n10. 您是否曾因為牙齒或口腔的問題而有過尷尬的時候？\n很經常\n經常\n有時\n很少\n無\n11. 您是否曾因為牙齒或口腔的問題而變得容易對其他人發脾氣？\n很經常\n經常\n有時\n很少\n無\n12. 您是否曾因為牙齒或口腔的問題而難以進行日常生活？\n很經常\n經常\n有時\n很少\n無\n13. 您是否曾因為牙齒或口腔的問題而覺得生活不是那麼令人滿意？\n很經常\n經常\n有時\n很少\n無\n14. 您是否曾因為牙齒或口腔的問題而什麼事都幹不了？\n很經常\n經常\n有時\n很少\n無\n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "口腔健康對生活質量的影響程度\n\n 請根據你過去一年的情況回答下列問題:",
+      "choices": [],
+      "inputs": [],
+      "errors": ""
+    },
+    {
+      "qtxt": "1. 您是否曾因為牙齒或口腔的問題而影響發音？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID131",
+          "id": "QR~QID131~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID131",
+          "id": "QR~QID131~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID131",
+          "id": "QR~QID131~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID131",
+          "id": "QR~QID131~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID131",
+          "id": "QR~QID131~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID131-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "2. 您是否曾因為牙齒或口腔的問題而感到自己的味覺變差？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID134",
+          "id": "QR~QID134~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID134",
+          "id": "QR~QID134~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID134",
+          "id": "QR~QID134~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID134",
+          "id": "QR~QID134~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID134",
+          "id": "QR~QID134~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID134-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "3.您口腔內是否曾出現過明顯疼痛？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID185",
+          "id": "QR~QID185~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID185",
+          "id": "QR~QID185~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID185",
+          "id": "QR~QID185~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID185",
+          "id": "QR~QID185~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID185",
+          "id": "QR~QID185~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID185-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "4. 您是否曾因為牙齒或口腔的問題而覺得吃什麼東西都不舒服？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID181",
+          "id": "QR~QID181~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID181",
+          "id": "QR~QID181~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID181",
+          "id": "QR~QID181~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID181",
+          "id": "QR~QID181~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID181",
+          "id": "QR~QID181~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID181-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "5. 您是否曾因為牙齒或口腔的問題而在其他人面前覺得不自在？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID182",
+          "id": "QR~QID182~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID182",
+          "id": "QR~QID182~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID182",
+          "id": "QR~QID182~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID182",
+          "id": "QR~QID182~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID182",
+          "id": "QR~QID182~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID182-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "6. 您是否曾因為牙齒或口腔的問題而感到緊張不安？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID183",
+          "id": "QR~QID183~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID183",
+          "id": "QR~QID183~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID183",
+          "id": "QR~QID183~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID183",
+          "id": "QR~QID183~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID183",
+          "id": "QR~QID183~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID183-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "7. 您是否曾因為牙齒或口腔的問題而對自己的飲食很不滿意？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID184",
+          "id": "QR~QID184~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID184",
+          "id": "QR~QID184~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID184",
+          "id": "QR~QID184~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID184",
+          "id": "QR~QID184~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID184",
+          "id": "QR~QID184~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID184-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "8. 您是否曾因為牙齒或口腔的問題而不得不在進餐時中途停下來？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID186",
+          "id": "QR~QID186~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID186",
+          "id": "QR~QID186~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID186",
+          "id": "QR~QID186~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID186",
+          "id": "QR~QID186~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID186",
+          "id": "QR~QID186~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID186-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "9. 您是否曾因為牙齒或口腔的問題而不能很好的休息？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID187",
+          "id": "QR~QID187~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID187",
+          "id": "QR~QID187~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID187",
+          "id": "QR~QID187~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID187",
+          "id": "QR~QID187~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID187",
+          "id": "QR~QID187~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID187-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "10. 您是否曾因為牙齒或口腔的問題而有過尷尬的時候？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID188",
+          "id": "QR~QID188~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID188",
+          "id": "QR~QID188~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID188",
+          "id": "QR~QID188~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID188",
+          "id": "QR~QID188~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID188",
+          "id": "QR~QID188~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID188-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "11. 您是否曾因為牙齒或口腔的問題而變得容易對其他人發脾氣？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID189",
+          "id": "QR~QID189~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID189",
+          "id": "QR~QID189~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID189",
+          "id": "QR~QID189~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID189",
+          "id": "QR~QID189~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID189",
+          "id": "QR~QID189~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID189-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "12. 您是否曾因為牙齒或口腔的問題而難以進行日常生活？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID190",
+          "id": "QR~QID190~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID190",
+          "id": "QR~QID190~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID190",
+          "id": "QR~QID190~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID190",
+          "id": "QR~QID190~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID190",
+          "id": "QR~QID190~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID190-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "13. 您是否曾因為牙齒或口腔的問題而覺得生活不是那麼令人滿意？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID191",
+          "id": "QR~QID191~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID191",
+          "id": "QR~QID191~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID191",
+          "id": "QR~QID191~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID191",
+          "id": "QR~QID191~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID191",
+          "id": "QR~QID191~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID191-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "14. 您是否曾因為牙齒或口腔的問題而什麼事都幹不了？",
+      "choices": [
+        "很經常",
+        "很經常",
+        "經常",
+        "經常",
+        "有時",
+        "有時",
+        "很少",
+        "很少",
+        "無",
+        "無"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID192",
+          "id": "QR~QID192~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID192",
+          "id": "QR~QID192~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID192",
+          "id": "QR~QID192~3"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID192",
+          "id": "QR~QID192~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID192",
+          "id": "QR~QID192~5"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID192-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}

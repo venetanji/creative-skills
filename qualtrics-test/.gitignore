@@ -1,0 +1,3 @@
+node_modules/
+!pages/*.png
+!pages-no/*.png

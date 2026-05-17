@@ -1,0 +1,49 @@
+{
+  "text": "已載入頁面\n請輸入預約編號:\n參與者是否已完成問卷部分？\n是\n否\n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "請輸入預約編號:",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID3~TEXT",
+          "id": "QR~QID3"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID3-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "參與者是否已完成問卷部分？",
+      "choices": [
+        "是",
+        "是",
+        "否",
+        "否"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID165",
+          "id": "QR~QID165~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID165",
+          "id": "QR~QID165~2"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID165-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}

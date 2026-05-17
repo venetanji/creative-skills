@@ -1,0 +1,86 @@
+{
+  "text": "Participant ID: Test response\n\n請如實記錄實際數值。切勿作出任何診斷。請參與者參考卡片上的參考表，但須謹慎解讀。必要時請諮詢站崗護士。\n收縮壓 (上方數字) \n舒張壓 (下方數字) \n脈搏（每分鐘跳動次數）Pulse \n是否有第二次血壓讀數\n否\n是",
+  "questions": [
+    {
+      "qtxt": "Participant ID: Test response\n\n請如實記錄實際數值。切勿作出任何診斷。請參與者參考卡片上的參考表，但須謹慎解讀。必要時請諮詢站崗護士。",
+      "choices": [],
+      "inputs": []
+    },
+    {
+      "qtxt": "收縮壓 (上方數字)",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID63~TEXT",
+          "id": "QR~QID63"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID63-Advance"
+        }
+      ]
+    },
+    {
+      "qtxt": "舒張壓 (下方數字)",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID64~TEXT",
+          "id": "QR~QID64"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID64-Advance"
+        }
+      ]
+    },
+    {
+      "qtxt": "脈搏（每分鐘跳動次數）Pulse",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID66~TEXT",
+          "id": "QR~QID66"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID66-Advance"
+        }
+      ]
+    },
+    {
+      "qtxt": "是否有第二次血壓讀數",
+      "choices": [
+        "否",
+        "否",
+        "是",
+        "是"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID175",
+          "id": "QR~QID175~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID175",
+          "id": "QR~QID175~2"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID175-Advance"
+        }
+      ]
+    }
+  ],
+  "progress": "",
+  "title": "Qualtrics Survey | Qualtrics Experience Management"
+}

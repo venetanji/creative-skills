@@ -1,0 +1,97 @@
+{
+  "text": "您在下一頁 \n血糖值\n空腹狀態 \n空腹 ≥8 小時\n空腹 ≥2 小時\n非空腹\n未知\n是否知悉糖尿病 \n是\n否\n未知\n由 Qualtrics 提供支援",
+  "questions": [
+    {
+      "qtxt": "血糖值",
+      "choices": [],
+      "inputs": [
+        {
+          "type": "text",
+          "name": "QR~QID84~TEXT",
+          "id": "QR~QID84"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID84-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "空腹狀態",
+      "choices": [
+        "空腹 ≥8 小時",
+        "空腹 ≥8 小時",
+        "空腹 ≥2 小時",
+        "空腹 ≥2 小時",
+        "非空腹",
+        "非空腹",
+        "未知",
+        "未知"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID80",
+          "id": "QR~QID80~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID80",
+          "id": "QR~QID80~4"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID80",
+          "id": "QR~QID80~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID80",
+          "id": "QR~QID80~3"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID80-Advance"
+        }
+      ],
+      "errors": ""
+    },
+    {
+      "qtxt": "是否知悉糖尿病",
+      "choices": [
+        "是",
+        "是",
+        "否",
+        "否",
+        "未知",
+        "未知"
+      ],
+      "inputs": [
+        {
+          "type": "radio",
+          "name": "QR~QID82",
+          "id": "QR~QID82~1"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID82",
+          "id": "QR~QID82~2"
+        },
+        {
+          "type": "radio",
+          "name": "QR~QID82",
+          "id": "QR~QID82~3"
+        },
+        {
+          "type": "button",
+          "name": "",
+          "id": "QID82-Advance"
+        }
+      ],
+      "errors": ""
+    }
+  ]
+}
