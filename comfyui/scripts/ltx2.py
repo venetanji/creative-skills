@@ -30,6 +30,7 @@ Models required on the server:
 """
 from core import WorkflowGraph
 import os
+import sys
 import time
 
 
@@ -1249,6 +1250,14 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                     ic_loras=None,
                     ic_lora_reference_filename=None,
                     ic_lora_reference_strength=1.0,
+                    # Where in the transition latent the IC-LoRA cond starts.
+                    # Default 0 keeps back-compat with non-transition callers.
+                    # For transitions, set to the empty-middle start (= 1.0s
+                    # @ 24fps = frame 24) to avoid frame_idx=0 collision with
+                    # the A-side LTXVAddGuide — colliding pixel-frame starts
+                    # underflow LTXVCropGuides' num_keyframes count and pass-2
+                    # refines the un-stripped extras as content (5-9s glitch).
+                    ic_lora_frame_idx=0,
                     checkpoint_name=None, text_encoder=None,
                     **_):
     """Transition clip scene N → scene N+1 via the ltx2.3-transition LoRA
@@ -1392,7 +1401,7 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                            positive=cond[0], negative=cond[1],
                            vae=checkpoint[2], latent=empty_video[0],
                            image=ic_ref_prep[0],
-                           frame_idx=0,
+                           frame_idx=int(ic_lora_frame_idx),
                            strength=float(ic_lora_reference_strength),
                            latent_downscale_factor=ic_loaded[1],
                            crop="disabled",
@@ -1479,7 +1488,21 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                      + float(lat_idx) / float(fps_int)
                      - float(next_video_song_start_sec)
                      + float(next_video_vocal_offset_sec)) * fps_int))
-                src_frame = max(0, src_frame)
+                # If the latent position maps to BEFORE scene B starts
+                # (negative src_frame), drop it. Old behaviour clamped to
+                # 0, which silently locked multiple latent positions to
+                # scene B's first frame — every anchor became "snap to
+                # scene B's static head", killing the morph's freedom in
+                # the empty middle. Better to skip the anchor entirely
+                # (the morph LoRA + IC-LoRA cond can carry the transition
+                # without it) and warn loudly.
+                if src_frame < 0:
+                    print(f"[ltx2_transition] WARN: b_sparse latent_idx={lat_idx} "
+                          f"maps to next_video src_frame={src_frame} (BEFORE "
+                          f"scene B starts at song-time "
+                          f"{next_video_song_start_sec}s); skipping this anchor",
+                          file=sys.stderr)
+                    continue
             else:
                 src_frame = 0
             ref = _video_range_frames(

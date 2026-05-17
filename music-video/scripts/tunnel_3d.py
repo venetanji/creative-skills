@@ -373,6 +373,11 @@ def handle_fx(notes, tunnel, camera_state):
 def render(stems, bpm, output: Path, *,
            duration: float, fps: int, width: int, height: int,
            start_sec: float = 0.0, base_speed: float = 24.0,
+           # When set, the camera speed linearly interpolates from
+           # base_speed at t=0 to end_speed at t=duration. Useful for
+           # transition-window conds where the tunnel-flight should ease
+           # out before scene B takes over.
+           end_speed: float | None = None,
            fov_deg: float = 75.0, near: float = 0.5, far: float = 60.0,
            seed: int = 42):
     random.seed(seed)
@@ -434,7 +439,12 @@ def render(stems, bpm, output: Path, *,
         # Camera step
         beat = state["beat"]
         beat_pulse = math.sin(beat * 2 * math.pi)
-        speed = (base_speed + camera_state["speed_boost"]) + beat_pulse * 4
+        if end_speed is None:
+            cur_base = base_speed
+        else:
+            ramp = t / max(duration, 1e-6)
+            cur_base = base_speed + (end_speed - base_speed) * ramp
+        speed = (cur_base + camera_state["speed_boost"]) + beat_pulse * 4
         camera_state["z"] -= speed * dt
         camera_state["speed_boost"] *= math.pow(0.05, dt)
         camera_state["roll_vel"] *= math.pow(0.1, dt)
@@ -484,6 +494,9 @@ def main():
     p.add_argument("--height", type=int, default=768)
     p.add_argument("--start-sec", type=float, default=0.0)
     p.add_argument("--bpm", type=float, default=128.0)
+    p.add_argument("--end-speed", type=float, default=None,
+                   help="Linear ramp from --base-speed at t=0 to --end-speed "
+                        "at t=duration. Default = no ramp (constant base_speed).")
     p.add_argument("--base-speed", type=float, default=24.0,
                    help="forward camera speed in world units / second")
     p.add_argument("--fov", type=float, default=75.0)
@@ -527,6 +540,7 @@ def main():
            duration=duration, fps=args.fps,
            width=args.width, height=args.height,
            start_sec=args.start_sec, base_speed=args.base_speed,
+           end_speed=args.end_speed,
            fov_deg=args.fov, near=args.near, far=args.far,
            seed=args.seed)
 

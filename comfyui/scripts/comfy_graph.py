@@ -507,6 +507,7 @@ HANDLERS = {
             else (upload_if_local(opts.get("ic_lora_reference", ""))
                   if opts.get("ic_lora_reference") else None)),
         ic_lora_reference_strength=float(opts.get("ic_lora_reference_strength", 1.0)),
+        ic_lora_frame_idx=int(opts.get("ic_lora_frame_idx", 0)),
         seed=seed),
     "tts": lambda opts, seed, prompt: tts.qwen_tts(
         text=opts.get("text", prompt), filename_prefix=opts.get("prefix", "tts")),

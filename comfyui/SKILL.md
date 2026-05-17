@@ -379,7 +379,7 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 | `flf2v` | First+last frame to video (LTX-2.3, two-pass; default fps=25) | `--first`, `--last`, `--prompt`, `--seconds`, `--fps`, `--guide_strength`, `--use_transition_lora` |
 | `continuation` | Extend an existing video (LTX-2.3, two-pass) | `--prev_video`, `--prompt`, `--seconds`, `--audio`, `--overlap_seconds 1.0`, `--overlap_strength 1.0`, `--prev_frames N` (bypass ffprobe) |
 | `multiguide` | N image guides at N latent positions (LTX-2.3) | `--guides a.png,b.png,...`, `--frame_indices 0,96,168`, `--strengths 1.0,1.0,1.0`, `--audio`, `--no_transition_lora 1` (transition LoRA is **on by default** here) |
-| `transition` | Song-aligned morph between two clips (LTX-2.3) | `--prev_video`, `--next_video`, `--audio`, `--seconds`, `--mask_start_sec`, `--mask_end_sec`, `--use_addguide 1`, `--multiframe_guide 24`, `--multiframe_guide_last 1`, `--b_sparse_latent_positions "96"` or `"72,80,88,96"` |
+| `transition` | Song-aligned morph between two clips (LTX-2.3) | `--prev_video`, `--next_video`, `--audio`, `--seconds`, `--mask_start_sec`, `--mask_end_sec`, `--use_addguide 1`, `--multiframe_guide 24`, `--multiframe_guide_last 1`, `--b_sparse_latent_positions "96"` or `"72,80,88,96"`, `--ic_loras` + `--ic_lora_reference_video` + `--ic_lora_reference_strength` + `--ic_lora_frame_idx 24` for multiguide stitching (see music-video SKILL.md "Multiguide stitching") |
 | `tts` | Text-to-speech (Qwen3 TTS) | `--text`, `--prefix` |
 | `stems` | Vocals + instrumental split (MelBandRoFormer) | `--audio`, `--model`, `--prefix` |
 | `stt` | Whisper transcription → txt + word/segment SRTs | `--audio`, `--model_size large-v3-turbo`, `--language auto`, `--prefix` |

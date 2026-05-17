@@ -1335,6 +1335,19 @@ def cmd_transitions(spec: dict, project: Path) -> None:
         #            Default "96" (= 1f, single B-anchor at the tail).
         #            Use "72,80,88,96" (= 4f) on boundaries INTO lipsync/
         #            singing scenes for smoother character establishment.
+        #   ic_lora: optional dict — feed a structural reference video to
+        #            the morph's empty middle so the LoRA has something to
+        #            anchor on. Shape:
+        #              ic_lora:
+        #                file: <ltx-ic-lora-filename>
+        #                strength: 1.0
+        #                reference_video: cond/<n>-<label>.mp4 (or .png)
+        #                reference_strength: 0.7
+        #                frame_idx: 24    # default — empty-middle start
+        #            Single-ref only today. Multi-ref (list form) is blocked
+        #            by an upstream LTXVCropGuides bug; see
+        #            /workspace/runbooks/music-video-v9-lessons-2026-05-16.md
+        #            for the 2026-05-17 session findings.
         bttp = (b.get("transition_from_prev") or {})
         prompt = bttp.get("prompt", default_prompt)
         b_sparse = bttp.get("b_sparse") or tv.get("default_b_sparse", "96")
@@ -1342,6 +1355,13 @@ def cmd_transitions(spec: dict, project: Path) -> None:
             b_sparse_str = ",".join(str(int(x)) for x in b_sparse)
         else:
             b_sparse_str = str(b_sparse)
+        ic_lora_block = bttp.get("ic_lora")
+        if "loras" in bttp:
+            sys.exit(
+                f"transition {a_idx}→{b_idx}: `transition_from_prev.loras` (list) "
+                f"is blocked — multi-reference IC-LoRA chains hit an upstream "
+                f"LTXVCropGuides undercount when guides share frame_idx. Use the "
+                f"singular `transition_from_prev.ic_lora` dict instead.")
 
         # Guide-block frame counts must be multiples of 8 per LTX's latent
         # temporal quantization. 1s @ 24fps = 24 frames → ok.
@@ -1399,9 +1419,73 @@ def cmd_transitions(spec: dict, project: Path) -> None:
             trans_fast = bool(vs.get("fast"))
         if trans_fast:
             cmd += ["--fast"]
+        # IC-LoRA on transition: structural cond runs through the morph's
+        # empty middle. frame_idx defaults to guide_sec (1.0s @ default_fps
+        # = 24 frames) so it starts right after the A-guide block, dodging
+        # the frame_idx=0 collision that triggers the LTXVCropGuides
+        # undercount on 2-pass refine. If the reference video would
+        # overflow the remaining latent (frame_idx + ref_frames > length),
+        # we pre-trim to a sibling .ictrim.mp4 in the project.
+        ic_lora_extras = []
+        if ic_lora_block:
+            ic_file = ic_lora_block.get("file")
+            ic_strength = float(ic_lora_block.get("strength", 1.0))
+            ic_ref = ic_lora_block.get("reference_video") or ic_lora_block.get("reference")
+            ic_ref_strength = float(ic_lora_block.get("reference_strength", 1.0))
+            ic_frame_idx = int(ic_lora_block.get("frame_idx", guide_frames))
+            if not (ic_file and ic_ref):
+                sys.exit(f"transition {a_idx}→{b_idx}: ic_lora needs both "
+                         f"`file` and `reference_video|reference`")
+            ic_ref_path = (project / ic_ref) if not Path(ic_ref).is_absolute() else Path(ic_ref)
+            if not ic_ref_path.exists():
+                sys.exit(f"transition {a_idx}→{b_idx}: ic_lora reference "
+                         f"{ic_ref_path} does not exist")
+            # Pre-trim video reference if it would overflow the transition latent.
+            # Latent length = ceil(dur*fps / 8) * 8 frames; cond must fit
+            # [ic_frame_idx, ic_frame_idx + cond_frames) within it.
+            is_video = ic_ref_path.suffix.lower() in (".mp4", ".mov", ".webm", ".mkv")
+            if is_video:
+                length_frames = max(8, (int(dur * default_fps) // 8) * 8)
+                if length_frames < int(dur * default_fps):
+                    length_frames += 8
+                max_cond_frames = length_frames - ic_frame_idx
+                max_cond_sec = max_cond_frames / float(default_fps)
+                cond_dur = _probe_duration(ic_ref_path)
+                if cond_dur > max_cond_sec + 0.01 and max_cond_sec > 0.5:
+                    trimmed = tdir / f"{a_stem}__{b_stem}-ictrim.mp4"
+                    if not trimmed.exists():
+                        subprocess.run([ffmpeg, "-y", "-loglevel", "error",
+                                        "-i", str(ic_ref_path),
+                                        "-t", f"{max_cond_sec:.3f}",
+                                        "-c", "copy", str(trimmed)],
+                                       capture_output=True)
+                        if not trimmed.exists() or trimmed.stat().st_size < 1024:
+                            # -c copy can fail on tight cuts; re-encode
+                            subprocess.run([ffmpeg, "-y", "-loglevel", "error",
+                                            "-i", str(ic_ref_path),
+                                            "-t", f"{max_cond_sec:.3f}",
+                                            "-an",
+                                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                            "-r", str(default_fps),
+                                            str(trimmed)],
+                                           capture_output=True)
+                    _log(project, f"transition {a_idx}→{b_idx}: trimmed cond "
+                                  f"{ic_ref_path.name} ({cond_dur:.2f}s) → "
+                                  f"{trimmed.name} ({max_cond_sec:.2f}s)")
+                    ic_ref_path = trimmed
+            ic_lora_extras = [
+                "--ic_loras", f"{ic_file}:{ic_strength}",
+                "--ic_lora_reference_video" if is_video else "--ic_lora_reference",
+                str(ic_ref_path),
+                "--ic_lora_reference_strength", f"{ic_ref_strength:.3f}",
+                "--ic_lora_frame_idx", str(ic_frame_idx),
+            ]
+            cmd += ic_lora_extras
+        ic_note = f", IC-LoRA cond @ idx {ic_lora_block.get('frame_idx', guide_frames)}" \
+                  if ic_lora_block else ""
         _log(project, f"transition {a_idx}→{b_idx}: {dur}s "
                       f"({guide_sec}s A-guide + {empty_end_sec - empty_start_sec}s empty + "
-                      f"{guide_sec}s B-guide), audio from {slice_start:.2f}s")
+                      f"{guide_sec}s B-guide), audio from {slice_start:.2f}s{ic_note}")
         rc = _run(cmd, log_path=project / "run.log",
                   env_override=_comfy_env_for("flux"))  # flux comfy = parallel with main
         if rc != 0:

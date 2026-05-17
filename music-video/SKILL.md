@@ -486,6 +486,26 @@ Goes on the INCOMING scene (B-side), not scene A. Read by [`cmd_transitions`](sc
 | `duration` | float | from `video.transitions.duration` | per-boundary length; `0` = hard cut (LTX morph skipped) |
 | `b_sparse` | str | from `video.transitions.default_b_sparse` | B-side latent positions for this boundary |
 | `prompt` | str | from `video.transitions.prompt` | morph prompt for this boundary only |
+| `ic_lora` | dict | none | IC-LoRA structural reference for the morph's empty middle. Single-ref only today (see "Multiguide stitching" below) |
+
+The `ic_lora` dict shape:
+
+```yaml
+transition_from_prev:
+  duration: 4.0
+  ic_lora:
+    file: ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
+    strength: 1.0                           # LoRA model strength
+    reference_video: cond/22-23-spin.mp4    # or reference: <png>
+    reference_strength: 1.0                 # AddGuide weight (0..1)
+    frame_idx: 24                           # where the cond starts in the latent
+```
+
+`reference_video` is auto-trimmed by `cmd_transitions` if it would
+overflow `(length_frames - frame_idx) / fps` — the assertion
+`latent_idx + guide_latent.shape[2] <= latent_length` in
+`LTXAddVideoICLoRAGuide.execute` is enforced upstream. A trimmed copy is
+written next to the transition mp4 as `…-ictrim.mp4`.
 
 ### Camera LoRAs
 
@@ -561,6 +581,114 @@ singing shots — more anchors prevent identity drift when the character
 immediately has to sing. Contiguous multi-frame B-blocks (e.g. 16 frames at
 positions 80-96) caused a mid-transition freeze at snap-in; always keep
 the B-side sparse (every 8 latent frames).
+
+**b_sparse positions that map to BEFORE scene B starts are dropped, not
+clamped.** A 4s transition between c2_breath (ends 130.02s) and tunnel_drop
+(starts 132.0s) puts the boundary centre at 130.02 → transition spans
+[128.02, 132.02]. Latent positions 72/80/88 then map to song times
+131.02 / 131.35 / 131.69 — all BEFORE scene B's start at 132.0 → negative
+`src_frame` in `next_video`. The old `max(0, x)` clamp silently locked
+all four anchors to scene B's frame 0, killing the morph's freedom in the
+empty middle (every output snapped to scene B's static head by latent 72).
+The current behaviour skips those positions with a stderr warning and
+proceeds with whatever anchors remain. For boundaries where scene B
+starts in the back half of the transition window, override `b_sparse: "96"`
+explicitly to keep just the tail anchor.
+
+### Multiguide stitching (the canonical seamless-transition pattern)
+
+When a morph should bridge two scenes with continuous structural motion
+through the empty middle (not just smooth-pixel-interpolate from A's tail to
+B's head), use the multiguide stitch: **A-side `LTXVAddGuide` at
+frame_idx=0 + IC-LoRA cond at frame_idx=24 + single B-side anchor at
+latent 96**. The IC-LoRA's structural reference video carries continuous
+geometry through the morph's empty middle, the morph LoRA blends the
+endpoints, and the single tail anchor lands scene B cleanly without
+yanking the latent.
+
+Recipe:
+
+1. **Render a time-aligned cond** for the transition's song-time window
+   via `midi2canny.py --polyfield-only` (or `tunnel_3d.py`, etc.). For a
+   boundary spanning song time `[T_a, T_b]`:
+   ```bash
+   midi2canny.py --polyfield-only \
+     --drums midi/drums_audio_aligned.mid \
+     --vocals midi/vocals_audio_aligned.mid \
+     --guitar midi/guitar_audio_aligned.mid \
+     --start-sec T_a --duration (T_b - T_a) \
+     --fps 24 --width <w> --height <h> \
+     --poly-count 24 --poly-rings 3 \
+     --output cond/N-N+1-trans.mp4
+   ```
+   Audio-aligned MIDIs are critical — the polyfield's drum-hit scale
+   pulses and vocal-pitch rotV impulses then line up with what the LoRA
+   will be conditioning the audio against. A cond rendered for the wrong
+   song-time window produces an output that "looks the same every render"
+   because the cond's temporal arc doesn't reinforce the audio's arc.
+
+2. **Wire the cond** into the per-boundary `transition_from_prev.ic_lora`
+   block on scene B with `frame_idx: 24` (= 1.0s @ 24fps = the empty
+   middle's start). The non-zero `frame_idx` is critical: a guide at
+   `frame_idx=0` collides with the A-side `LTXVAddGuide`'s keyframe
+   time-start, which makes `comfy_extras.nodes_lt.LTXVCropGuides`
+   undercount `num_keyframes` (it uses `torch.unique(time_starts)`) and
+   pass-2 refines the un-stripped guide frames as content — 5-9s glitched
+   output instead of clean 4s. `frame_idx: 24` puts the cond past the
+   A-side block.
+
+3. **Override `b_sparse: "96"`** if scene B starts in the back half of
+   the transition window (see warning above). Single tail anchor only —
+   gives the morph LoRA the full empty middle to follow the cond.
+
+4. **Match scene B's IC-LoRA cond to its own song-time window.** Scene 23
+   spans 132-139s, so its `hdr_lora.reference_video` should be a cond
+   rendered with `--start-sec 132 --duration 7`, NOT the transition's
+   cond (which covers 128-132s). The output looks the same every render
+   if the cond's temporal arc doesn't match the audio's arc.
+
+5. **If scene B's intro is static, scene B has to be rerendered with an
+   action prompt.** The morph LoRA interpolates A → B; if B's first
+   frames are a held shot, the morph lands on a held shot. Rewriting
+   scene B's prompt to "action from frame one" + bumping its IC-LoRA
+   reference_strength is what unlocks "polygons whipping past the face"
+   instead of "face holding still until the drum hit at +2.8s".
+
+Worked example for the stable-altitude v9 c2_breath → tunnel_drop boundary:
+
+```yaml
+- label: tunnel_drop
+  start_sec: 132.0
+  duration_sec: 7.0
+  transition_from_prev:
+    duration: 4.0
+    b_sparse: "96"                          # single tail anchor — see warning above
+    ic_lora:
+      file: ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
+      strength: 1.0
+      reference_video: cond/22-23-spin.mp4   # midi2canny --polyfield-only for 128-132s window
+      reference_strength: 1.0
+      frame_idx: 24                          # past A-side AddGuide block
+  hdr_lora:
+    file: ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
+    strength: 1.0
+    reference_video: cond/23-tunnel_drop-v2.mp4   # midi2canny for 132-139s — TIME-ALIGNED to scene
+    reference_strength: 1.0
+  prompt: >
+    {operator}'s face flickering at the center of an EXPLODING geometric
+    mandala of neon-cyan + sodium-orange polygons that spin and shatter
+    outward from frame one, polygons whipping past the face, … continuous
+    violent motion through the drum slam at 2.8s into the explosion peak.
+```
+
+**Multi-reference IC-LoRA** (multiple `LTXAddVideoICLoRAGuide` nodes chained
+under different cond videos) is NOT supported today. Upstream
+`comfy_extras.nodes_lt.LTXVCropGuides.get_keyframe_idxs` counts
+`num_keyframes = unique(keyframe_idxs[:, 0, :, 0])` — when 2+ guides share
+any pixel-frame time-start, the unique-count undercounts and pass-2
+refines the extras as content. Workaround: only one IC-LoRA per
+transition. The `transition_from_prev.loras` (list) schema is reserved
+but rejected at yaml-load if used.
 
 ### Multi-guide scenes (`guides:` field)
 
