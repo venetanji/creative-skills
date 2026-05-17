@@ -1367,16 +1367,31 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
     cond = _encode_prompts(g, clip[0], prompt, negative, fps)
 
     # Base latent — empty (zeros), of the correct length. Then AddNoise
-    # with sigma=1.0 fills it with pure noise. LTX reference workflows
-    # VAE-encode a real video for this (non-zero latent throughout); we
-    # synthesize equivalent via noise so the sampler's denoising step sees
-    # a proper diffusion starting point in the masked region (rather than
-    # zeros, which can cause mid-mask motion collapse).
+    # with sigma=1.0 fills it with pure noise BEFORE the IC-LoRA guide
+    # injects its cond frames. This ordering is critical: AddNoise at
+    # sigma=1.0 does `out["samples"] = noise * sigma + samples * sqrt(1-sigma²)
+    # = noise + 0` — it WIPES the samples tensor. If AddNoise runs AFTER
+    # LTXAddVideoICLoRAGuide, the cond's injected reference frames at
+    # frame_idx positions get clobbered with noise, and the polyfield /
+    # tunnel cond never reaches the sampler. The conditioning metadata
+    # (latent.copy() preserves dict keys) survives but the latent values
+    # the LoRA was supposed to attend to are gone. Symptom: cond is
+    # invisible in the output despite ref_strength=1.0.
     empty_video = g.node("EmptyLTXVLatentVideo",
                          width=int(width), height=int(height),
                          length=length_frames, batch_size=1)
-    # IC-LoRA reference conditioning — apply on the empty latent BEFORE
-    # the noise/Inplace pipeline so the cond's keyframe_idxs land first.
+    base_seed = seed or _rand_seed()
+    noise_seed_val = base_seed + 10_000
+    init_noise = g.node("RandomNoise", noise_seed=int(noise_seed_val))
+    init_sigmas = g.node("ManualSigmas", sigmas="1.0, 0.0")
+    noisy_video = g.node("AddNoise",
+                         model=model[0],
+                         noise=init_noise[0],
+                         sigmas=init_sigmas[0],
+                         latent_image=empty_video[0])
+    # IC-LoRA reference conditioning — apply on the NOISY latent so the
+    # cond's reference frames at frame_idx positions land on top of the
+    # noise (preserved through the rest of the pipeline).
     if ic_lora_active:
         is_video_ref = bool(
             str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
@@ -1399,7 +1414,7 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                                   border_width=0)
         ic_guide = g.node("LTXAddVideoICLoRAGuide",
                            positive=cond[0], negative=cond[1],
-                           vae=checkpoint[2], latent=empty_video[0],
+                           vae=checkpoint[2], latent=noisy_video[0],
                            image=ic_ref_prep[0],
                            frame_idx=int(ic_lora_frame_idx),
                            strength=float(ic_lora_reference_strength),
@@ -1409,16 +1424,7 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                            tile_size=256,
                            tile_overlap=64)
         cond = (ic_guide[0], ic_guide[1])
-        empty_video = (ic_guide[2],)
-    base_seed = seed or _rand_seed()
-    noise_seed_val = base_seed + 10_000
-    init_noise = g.node("RandomNoise", noise_seed=int(noise_seed_val))
-    init_sigmas = g.node("ManualSigmas", sigmas="1.0, 0.0")
-    noisy_video = g.node("AddNoise",
-                         model=model[0],
-                         noise=init_noise[0],
-                         sigmas=init_sigmas[0],
-                         latent_image=empty_video[0])
+        noisy_video = (ic_guide[2],)
 
     # Resolve raw frame indices — either passed directly, or derived from
     # song-aware timing params. Song-time → frame conversion uses exact
