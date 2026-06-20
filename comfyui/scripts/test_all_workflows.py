@@ -276,6 +276,25 @@ def main():
     else:
         log("  Skipping — no reference frame")
 
+    # ── 9. LTX2 ingredients (reference-sheet IC-LoRA) ────────────
+    # Smoke test: feeds an image as a degenerate single-element "sheet"
+    # (looped in-graph to a static reference video) and checks the
+    # ingredients IC-LoRA graph runs without node errors / OOM. Real sheets
+    # are multi-panel composites — see make_reference_sheet.py /
+    # storyboard generate_reference_sheet.py.
+    log("\n[9] LTX2 ingredients (reference-sheet IC-LoRA, 3s @ 768x448)")
+    if i2v_ref:
+        run_test("ltx2_ingredients_3s",
+            cg.ltx2_ingredients_to_video(i2v_ref,
+                                         "the subject in a sunlit scene, cinematic",
+                                         seconds=3, width=768, height=448,
+                                         filename_prefix="test_ingredients", seed=seed),
+            timeout=900)
+    else:
+        results.append({"name": "ltx2_ingredients_3s", "status": "skipped",
+                        "error": "no ref image"})
+        save_results()
+
     # ── Summary ───────────────────────────────────────────────────
     log("\n" + "=" * 60)
     log("RESULTS SUMMARY")
