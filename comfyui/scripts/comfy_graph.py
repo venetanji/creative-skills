@@ -7,6 +7,7 @@ Usage:
   python comfy_graph.py t2v   --prompt "a forest" --seconds 5
   python comfy_graph.py i2v   --image photo.jpg --prompt "person walking"
   python comfy_graph.py ia2v  --image photo.jpg --audio track.mp3 --prompt "..."
+  python comfy_graph.py ingredients --sheet sheet.png --prompt "..." --seconds 5   # IC-LoRA reference-sheet character/prop/location consistency
   python comfy_graph.py flf2v --first a.png --last b.png --prompt "..." --seconds 5
   python comfy_graph.py transition --first a.png --last b.png --prompt "..." --seconds 4
   python comfy_graph.py multiguide --guides a.png,b.png,c.png --prompt "..." --seconds 8 --audio slice.mp3
@@ -43,6 +44,7 @@ from flux2 import (flux2_text_to_image, flux2_single_image_edit, flux2_double_im
                     flux2_double_image_edit_multiprompt, flux2_multiple_angles,
                     flux2_multi_reference_edit, flux2_multi_reference_edit_multiprompt)
 from ltx2 import (ltx2_text_to_video, ltx2_image_to_video, ltx2_image_audio_to_video,
+                   ltx2_ingredients_to_video,
                    ltx2_first_last_frame_to_video, ltx2_multi_guide_to_video,
                    ltx2_continuation_to_video,
                    extract_last_frame)
@@ -53,7 +55,8 @@ import core
 # Route video workflows to the video comfy server, image/audio workflows to
 # the flux/default server. Bots submit via this CLI and shouldn't have to
 # worry about which server to target.
-VIDEO_COMMANDS = {"t2v", "i2v", "ia2v", "flf2v", "transition", "multiguide", "continuation"}
+VIDEO_COMMANDS = {"t2v", "i2v", "ia2v", "flf2v", "transition", "multiguide",
+                  "continuation", "ingredients"}
 # vconcat uses ComfyUI-FFmpeg nodes (MergingVideoByTwo / AddAudio) — pure
 # CPU stream-copy, no GPU needed, so it goes to the flux server to keep
 # the video GPU free for actual LTX renders.
@@ -352,6 +355,16 @@ HANDLERS = {
         negative=opts.get("negative"), fast=bool(opts.get("fast")),
         camera_lora=opts.get("camera_lora"),
         camera_lora_strength=float(opts.get("camera_lora_strength", 0.8)),
+        seed=seed),
+    "ingredients": lambda opts, seed, prompt: ltx2.ltx2_ingredients_to_video(
+        sheet_image=upload_if_local(opts.get("sheet", opts.get("image", ""))),
+        prompt=prompt,
+        seconds=float(opts.get("seconds", 5)), fps=int(opts.get("fps", 24)),
+        width=int(opts.get("width", 768)), height=int(opts.get("height", 448)),
+        filename_prefix=opts.get("prefix", "ltx2_ingredients"),
+        negative=opts.get("negative"), fast=bool(opts.get("fast")),
+        lora_strength=float(opts.get("lora_strength", 1.4)),
+        reference_strength=float(opts.get("reference_strength", 1.0)),
         seed=seed),
     "ia2v": lambda opts, seed, prompt: ltx2.ltx2_image_audio_to_video(
         image_filename=upload_if_local(opts.get("image", "")),

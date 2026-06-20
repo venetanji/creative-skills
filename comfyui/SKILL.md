@@ -187,6 +187,7 @@ i2iNmulti    Many prompts × N references   — one submission, N outputs
 t2v          Text-to-video (LTX-2.3)
 i2v          Image-to-video (LTX-2.3, first-frame)
 ia2v         Image + audio → video (LTX-2.3)
+ingredients  Reference-sheet → video (LTX-2.3 IC-LoRA; consistent characters/props/location)
 flf2v        First + last frame → video (LTX-2.3, converges to the last frame)
 transition   Song-aligned cross-scene morph (prev_video + next_video guides + masked middle)
 multiguide   Chained LTXVAddGuide — N anchors at N latent positions within one clip
@@ -376,6 +377,7 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 | `t2v` | Text-to-video (LTX-2.3, two-pass) | `--prompt`, `--seconds`, `--fps`, `--width`, `--height` |
 | `i2v` | Image-to-video (LTX-2.3, first-frame + refine) | `--image`, `--prompt`, `--seconds`, `--fps` |
 | `ia2v` | Image + audio to audio-reactive video | `--image`, `--audio`, `--prompt`, `--seconds`, `--fps`, `--image_refs a,b,c`, `--base_guide_strength 0.5`, `--refine_guide_strength 0.3`, `--identity_anchor`, `--identity_strength 0.3` |
+| `ingredients` | Reference-sheet IC-LoRA — keep characters/props/location consistent (LTX-2.3) | `--sheet sheet.png`, `--prompt`, `--seconds`, `--fps`, `--width 768 --height 448` (trained bucket), `--lora_strength 1.4`, `--reference_strength 1.0`, `--fast` |
 | `flf2v` | First+last frame to video (LTX-2.3, two-pass; default fps=25) | `--first`, `--last`, `--prompt`, `--seconds`, `--fps`, `--guide_strength`, `--use_transition_lora` |
 | `continuation` | Extend an existing video (LTX-2.3, two-pass) | `--prev_video`, `--prompt`, `--seconds`, `--audio`, `--overlap_seconds 1.0`, `--overlap_strength 1.0`, `--prev_frames N` (bypass ffprobe) |
 | `multiguide` | N image guides at N latent positions (LTX-2.3) | `--guides a.png,b.png,...`, `--frame_indices 0,96,168`, `--strengths 1.0,1.0,1.0`, `--audio`, `--no_transition_lora 1` (transition LoRA is **on by default** here) |
@@ -468,6 +470,18 @@ places them in the right spot.
   hard-locks. `"96"` (1f) is the default and works for most boundaries;
   `"72,80,88,96"` (4f) gives stronger character establishment going into
   singing / lipsync scenes.
+- **ingredients (reference-sheet IC-LoRA):** conditions the clip on a **reference
+  sheet** — one composite image with a clean panel per character (face + turnaround),
+  prop, and location (black bg, no text). `ltx2_ingredients_to_video(sheet_image, prompt)`
+  loops the sheet **in-graph** into a static reference video at the output res
+  (`LoadImage → ImageScale(WxH) → RepeatImageBatch(length) → LTXAddVideoICLoRAGuide`,
+  downscale 1) and applies `ltx-2.3-22b-ic-lora-ingredients-0.9` @ **1.4**. Output is a
+  single-width clip whose characters/props/location match the sheet. **Trained bucket
+  768×448 / 121f / 24fps** — stick to it for best results. The sheet must be in the
+  server `input/` dir (the CLI `--sheet` auto-uploads a local path). Prompt = a rich
+  scene description naming the sheet's elements (training format was
+  `Reference sheet: …\n\nGenerated video: …`; a single cinematic description also works).
+  Bigger panels carry over better; give important elements prominent, clean panels.
 
 ### Available LoRAs (19)
 - Camera: `ltx-2-19b-lora-camera-control-dolly-in/out/left/right/jib-up/jib-down/static`

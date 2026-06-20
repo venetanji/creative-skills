@@ -35,9 +35,14 @@ import time
 
 
 CKPT = "ltx-2.3-22b-dev-fp8.safetensors"
-TEXT_ENCODER = "gemma_3_12B_it_fp4_mixed.safetensors"
+# fp8 is the recommended TE and what's installed; the older fp4_mixed default was
+# removed from the server in a disk cleanup. (Matches SKILL.md's stated default.)
+TEXT_ENCODER = "gemma_3_12B_it_fp8_e4m3fn.safetensors"
 UPSCALER = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 DISTILLED_LORA = "ltx-2.3-22b-distilled-lora-384.safetensors"
+# "Ingredients" reference-sheet IC-LoRA (Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients).
+INGREDIENTS_LORA = "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors"
+INGREDIENTS_NEG = "pc game, console game, video game, cartoon, childish, ugly, worst quality, inconsistent motion, blurry, jittery, distorted"
 NEG_DEFAULT = "pc game, console game, video game, cartoon, childish, ugly, blurry, low quality, watermark, distorted, still frame, text, captions, subtitles, signs, logos, lettering, typography, words, letters"
 
 # sigmas match the production corgi workflow — do not tweak without A/B testing
@@ -468,6 +473,7 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
            ic_lora_reference_filename=None,
            ic_lora_reference_strength=1.0,
            ic_lora_reference_size=None,
+           ic_lora_reference_loop=False,
            ckpt=CKPT, text_encoder=TEXT_ENCODER):
     """
     ic_loras: optional list of (lora_name, strength) tuples. Each is loaded
@@ -530,7 +536,20 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
         is_video_ref = bool(ic_lora_reference_filename and
                             str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
                             in ("mp4", "mov", "webm", "mkv"))
-        if is_video_ref:
+        if ic_lora_reference_loop and not is_video_ref:
+            # Ingredients "reference sheet" path. The sheet is a STILL that the
+            # model expects as a static video at the output resolution (looped
+            # across frames, downscale factor 1). Build that batch in-graph —
+            # LoadImage -> ImageScale(WxH) -> RepeatImageBatch(length) — so we
+            # avoid an external ffmpeg/mp4 round-trip. This is the correct path
+            # for ltx-2.3-22b-ic-lora-ingredients; the ImagePrepForICLora (HDR)
+            # branch below pads/squishes the sheet into a half-frame diptych.
+            ic_load = g.node("LoadImage", image=ic_lora_reference_filename)
+            ic_scaled = g.node("ImageScale", image=ic_load[0],
+                               upscale_method="lanczos",
+                               width=int(width), height=int(height), crop="disabled")
+            ic_ref_prep = g.node("RepeatImageBatch", image=ic_scaled[0], amount=int(length))
+        elif is_video_ref:
             # Match the official Lightricks LTX-2.3 IC-LoRA Union-Control
             # workflow: LoadVideo → GetVideoComponents[image] →
             # ResizeImageMaskNode 'scale to multiple' (32) → LTXAddVideoICLoRAGuide.image.
@@ -683,6 +702,35 @@ def ltx2_text_to_video(prompt, seconds=5, fps=24,
                   seed=seed, filename_prefix=filename_prefix,
                   negative=negative, fast=fast,
                   camera_lora=camera_lora, camera_lora_strength=camera_lora_strength,
+                  ckpt=checkpoint_name or CKPT,
+                  text_encoder=text_encoder or TEXT_ENCODER)
+
+
+def ltx2_ingredients_to_video(sheet_image, prompt, seconds=5, fps=24,
+                              width=768, height=448,
+                              filename_prefix="ltx2_ingredients",
+                              seed=None, negative=None, fast=False,
+                              lora_strength=1.4, reference_strength=1.0,
+                              checkpoint_name=None, text_encoder=None, **_):
+    """LTX-2.3 'ingredients' IC-LoRA — reference-sheet character/prop/location control.
+
+    sheet_image: a single composite reference sheet already in the server input dir
+      (one clean panel per character/prop/location, black bg, no text). It is looped
+      in-graph into a static reference video at the output resolution (downscale 1)
+      and injected via LTXAddVideoICLoRAGuide, so the generated clip keeps the sheet's
+      elements consistent. Trained bucket: 768x448 / 121f / 24fps, LoRA strength 1.4.
+    prompt: a rich scene description naming the sheet's elements. The training format
+      was 'Reference sheet: <panels>\\n\\nGenerated video: <action>'; a single
+      cinematic description also works."""
+    length = _round_length(seconds, fps)
+    return _build(prompt, fps=fps, width=width, height=height, length=length,
+                  seed=seed, filename_prefix=filename_prefix,
+                  negative=negative if negative is not None else INGREDIENTS_NEG,
+                  fast=fast,
+                  ic_loras=[(INGREDIENTS_LORA, float(lora_strength))],
+                  ic_lora_reference_filename=sheet_image,
+                  ic_lora_reference_strength=float(reference_strength),
+                  ic_lora_reference_loop=True,
                   ckpt=checkpoint_name or CKPT,
                   text_encoder=text_encoder or TEXT_ENCODER)
 
@@ -1726,6 +1774,7 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
 
 
 # -------- unchanged utility --------
+
 
 def extract_last_frame(video_server_path, filename_prefix="last_frame"):
     """Extract the last frame from a ComfyUI output video.
