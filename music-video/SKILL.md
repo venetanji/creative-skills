@@ -380,6 +380,7 @@ it. Anything not listed is silently ignored.
 | `suno.make_instrumental` | bool | `false` | [`cmd_song`](scripts/music_video.py#L472) | request instrumental-only variants |
 | `subjects` | `dict[str, str]` | `{}` | [`_expand_subjects`](scripts/music_video.py#L352) | `{name}` tokens substituted in every prompt (scene + anchor) |
 | `anchor_image` | path | none | [`cmd_anchors`](scripts/music_video.py#L731) | top-level PNG; scenes referencing `image: "@anchor"` use this |
+| `reference_sheet` | path | none | [`cmd_scene`](scripts/music_video.py#L871) | project ingredients reference sheet (black-bg element panels); used by scenes with `mode: ingredients`. Author with `storyboard/generate_reference_sheet.py`. Make its aspect match `video.resolution`. |
 | `anchor_prompt` | str | falls back to `title + style` | [`cmd_anchors`](scripts/music_video.py#L731) | flux2 prompt for the top-level anchor when `anchor_image` is missing |
 | `gate_confirm_song` | bool | `true` | [`cmd_all`](scripts/music_video.py#L1420) | `all` halts after `song` for human review |
 | `gate_confirm_anchors` | bool | `true` | [`cmd_all`](scripts/music_video.py#L1420) | `all` halts after `anchors` for human review |
@@ -427,6 +428,10 @@ it. Anything not listed is silently ignored.
 | `prompt` | str | required | [`cmd_scene`](scripts/music_video.py#L871) | LTX ia2v prompt (continuous shot; `{subjects}` tokens expand) |
 | `image` | str | `"@anchor"` | [`_resolve_image`](scripts/music_video.py#L813) | first-frame source: `"@anchor"`, `"@last"`, `"@none"` (forces t2v), or a literal path |
 | `anchor` | dict | none | [`_generate_anchor`](scripts/music_video.py#L604) | per-scene flux2 pre-render config (see below); when present, this PNG becomes the scene's first frame |
+| `mode` | str | none | [`cmd_scene`](scripts/music_video.py#L871) | set to `ingredients` to render this scene via the LTX-2.3 reference-sheet IC-LoRA instead of ia2v/t2v (see "Ingredients mode" below). Inherits `video.mode`. |
+| `reference_sheet` | path | inherits top-level | [`cmd_scene`](scripts/music_video.py#L871) | per-scene sheet override for `mode: ingredients` |
+| `ingredients_lora_strength` | float | `1.4` (ltx2 default) | [`cmd_scene`](scripts/music_video.py#L871) | ingredients LoRA strength for this scene |
+| `ingredients_reference_strength` | float | `1.0` (ltx2 default) | [`cmd_scene`](scripts/music_video.py#L871) | `LTXAddVideoICLoRAGuide` strength for this scene |
 | `guides` | list | none | [`cmd_scene`](scripts/music_video.py#L871) (resolved via `storyboard.lib.guides.resolve_guides`) | mid-scene `LTXVAddGuide` entries (see "Multi-guide scenes") |
 | `camera_lora` | str | from `video.camera_lora` | [`cmd_scene`](scripts/music_video.py#L871) | one of `static`, `dolly-in`, `dolly-out`, `dolly-left`, `dolly-right`, `jib-up`, `jib-down` |
 | `camera_lora_strength` | float | from `video.camera_lora_strength` | [`cmd_scene`](scripts/music_video.py#L871) | LoRA strength override |
@@ -506,6 +511,46 @@ overflow `(length_frames - frame_idx) / fps` — the assertion
 `latent_idx + guide_latent.shape[2] <= latent_length` in
 `LTXAddVideoICLoRAGuide.execute` is enforced upstream. A trimmed copy is
 written next to the transition mp4 as `…-ictrim.mp4`.
+
+### Ingredients mode (project-level character/prop/location consistency)
+
+When a music video must keep the **same** character, props and locations
+consistent across *every* scene, condition each scene on ONE project **reference
+sheet** (black-bg element panels) via the LTX-2.3 ingredients IC-LoRA, instead of
+authoring a per-scene flux2 anchor.
+
+1. Build the sheet once with the storyboard skill:
+
+   ```bash
+   storyboard/scripts/generate_reference_sheet.py --out sheet.png \
+     --character cast.png --character-desc "…" \
+     --prop "x=…" --location "…" \
+     --width 1024 --height 576        # = video.resolution (aspect MUST match)
+   ```
+
+2. Point the project at it and flag the scenes:
+
+   ```yaml
+   reference_sheet: sheet.png          # project-level (or per-scene override)
+   video: { resolution: [1024, 576], fps: 24 }
+   scenes:
+     - label: chorus-1
+       start_sec: 41.0
+       duration_sec: 5                  # ~121f @ 24fps is the trained bucket
+       prompt: "the singer on the neon rooftop, holding the mic, rain"
+       mode: ingredients                # render via the reference sheet
+   ```
+
+`mode: ingredients` is checked **first** in the scene dispatch (authoritative
+over `image`/`guides`). The render is **silent by design** — the song is muxed
+over the whole timeline at assemble time and `assemble.py` strips per-clip audio
+anyway, so no audio slice is conditioned. The scene's generic `video.negative` is
+dropped in favour of the ingredients LoRA's tuned negative (set a per-scene
+`negative:` to override). Tune with `ingredients_lora_strength` (def 1.4) /
+`ingredients_reference_strength` (def 1.0). Trained buckets are landscape
+(768×448, 960×544); portrait is off-bucket — evaluate. Compose freely with
+camera LoRAs and transitions. See the comfyui skill's `ingredients` command and
+storyboard's "Reference sheets" section.
 
 ### Camera LoRAs
 

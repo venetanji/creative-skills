@@ -1132,7 +1132,45 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     # character anchor mid-shot.
     guides_yaml = scene.get("guides")
 
-    if image_path is None and not guides_yaml:
+    # `mode: ingredients` → LTX-2.3 reference-sheet IC-LoRA. ONE project sheet
+    # (project-level `reference_sheet:`, or a per-scene override) keeps recurring
+    # characters / props / locations consistent across every scene. Checked
+    # FIRST so the mode is authoritative regardless of image_path / guides.
+    # Silent by design: ingredients renders carry no useful audio and the song
+    # is muxed over the whole timeline at assemble time, so no slice is passed
+    # (and assemble.py strips per-clip audio anyway).
+    scene_mode = scene.get("mode") or vs.get("mode")
+    if scene_mode == "ingredients":
+        sheet = scene.get("reference_sheet") or spec.get("reference_sheet")
+        if not sheet:
+            sys.exit(f"scene {idx}: mode=ingredients needs `reference_sheet:` "
+                     f"(set it project-level or on the scene)")
+        sheet_path = (Path(sheet) if Path(sheet).is_absolute()
+                      else (project / sheet)).resolve()
+        if not sheet_path.exists():
+            sys.exit(f"scene {idx}: reference_sheet {sheet_path} does not exist")
+        # Default to the ingredients LoRA's tuned negative — drop the project's
+        # generic video.negative from `common` unless the scene sets its own.
+        ing_common, _skip = [], False
+        for tok in common:
+            if _skip:
+                _skip = False; continue
+            if tok == "--negative":
+                _skip = True; continue
+            ing_common.append(tok)
+        ing_extras: list[str] = []
+        if scene.get("negative"):
+            ing_extras += ["--negative", str(scene["negative"])]
+        ls = scene.get("ingredients_lora_strength", vs.get("ingredients_lora_strength"))
+        if ls is not None:
+            ing_extras += ["--lora_strength", str(float(ls))]
+        rs = scene.get("ingredients_reference_strength",
+                       vs.get("ingredients_reference_strength"))
+        if rs is not None:
+            ing_extras += ["--reference_strength", str(float(rs))]
+        cmd = ["python3", str(COMFY), "ingredients",
+               "--sheet", str(sheet_path)] + ing_extras + ing_common
+    elif image_path is None and not guides_yaml:
         # First scene with no anchor → fall back to t2v (no audio slice).
         cmd = ["python3", str(COMFY), "t2v"] + common
     elif guides_yaml:

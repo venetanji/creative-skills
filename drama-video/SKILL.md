@@ -33,6 +33,8 @@ character:
   anchor: ./path/to/character_anchor.png                     # primary identity image
   description: "Fennie — 17-year-old Korean ballet trainee…" # optional, available as {character} in prompts
 
+reference_sheet: ./path/to/sheet.png                         # optional; for shots with `mode: ingredients` (see below)
+
 video:
   fps: 24
   resolution: [1024, 576]
@@ -118,6 +120,32 @@ forward, character continues to be present. Most drama shots fit this.
 **When to fall back to `anchor` + fresh ia2v:** hard scene change
 (different room, different character, flashback). Skip
 `continue_from_prev` on that shot; give it a fresh `anchor:` block.
+
+### Ingredients mode (silent inserts)
+
+For B-roll / establishing / no-dialogue shots that must keep the recurring cast,
+props and locations consistent, set `mode: ingredients` on the shot and provide a
+project `reference_sheet:` (black-bg element panels — build it with
+`storyboard/scripts/generate_reference_sheet.py`, aspect matching
+`video.resolution`). The shot renders via the LTX-2.3 reference-sheet IC-LoRA:
+
+```yaml
+reference_sheet: ./sheet.png
+shots:
+  - label: pier_insert
+    start_sec: 41.0
+    duration_sec: 5                     # ~121f @ 24fps trained bucket
+    prompt: "wide insert: Marco alone on the pier at dusk, holding the trident"
+    mode: ingredients
+```
+
+**Silent by design** — ingredients shots carry no lipsync/dialogue (identity
+comes from the sheet, not the `identity_anchor`); the full audio track is muxed
+over the timeline at assemble. Use them only where on-screen speech isn't needed.
+`mode: ingredients` is checked **first** in the dispatch (over
+continuation/ia2v). Per-shot `reference_sheet`, `negative`,
+`ingredients_lora_strength` (def 1.4) and `ingredients_reference_strength` (def
+1.0) override the defaults. See the comfyui skill's `ingredients` command.
 
 ## CLI
 
