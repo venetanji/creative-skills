@@ -347,6 +347,27 @@ Standalone script with a `#!/usr/bin/env -S uv run --script` shebang and PEP 723
   --input clip1.mp4 --output last.png
 ```
 
+### make_reference_sheet.py — tile panels into an ingredients reference sheet
+
+Standalone `uv run --script` (auto-installs `pillow`). Lays already-rendered
+element panels (one per character/prop/location) onto **one black sheet, no
+text** for the `ingredients` command. Contain-fits each panel (no crop/distort)
+in an auto-grid sized for the canvas aspect. **Emit the sheet at the project's
+render WxH** — the ingredients graph stretches the sheet to the output size, so a
+mismatched aspect distorts the reference.
+
+```bash
+# Landscape (trained bucket)
+make_reference_sheet.py --out sheet.png --width 768 --height 448 \
+  face.png turnaround.png trident.png soda.png beach.png
+# Portrait music-video (off trained bucket — evaluate): --width 896 --height 1536
+# Force a layout: --grid 2x3  (or --cols / --rows); --pad / --margin / --bg r,g,b
+```
+
+Importable: `from make_reference_sheet import build_sheet`. To generate the
+panels *and* tile them from a single character ref, use the storyboard skill's
+`generate_reference_sheet.py` (it composes flux2 panels, then calls this).
+
 ### FLF2V (first-last-frame-to-video) / scene continuation pattern
 
 1. Generate clip A with i2v from an anchor image.
@@ -482,6 +503,9 @@ places them in the right spot.
   scene description naming the sheet's elements (training format was
   `Reference sheet: …\n\nGenerated video: …`; a single cinematic description also works).
   Bigger panels carry over better; give important elements prominent, clean panels.
+  Author the sheet with `make_reference_sheet.py` (tile your own panels) or, from a
+  single character ref, the storyboard skill's `generate_reference_sheet.py` (generates
+  panels via flux2, then tiles). Make the sheet match the render WxH/aspect.
 
 ### Available LoRAs (19)
 - Camera: `ltx-2-19b-lora-camera-control-dolly-in/out/left/right/jib-up/jib-down/static`
