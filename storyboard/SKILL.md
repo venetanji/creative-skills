@@ -74,6 +74,57 @@ generate_anchor.py --type i2i2 \
     --out     shots/003-coaching-anchor.png
 ```
 
+## Reference sheets — project-level consistency (ingredients IC-LoRA)
+
+Per-shot flux2 anchors keep a character consistent *one shot at a time*. For a
+whole music-video / drama where the **same** character, props and location must
+stay consistent across *every* shot, use an **ingredients reference sheet**: one
+composite image with a clean panel per recurring element (character face +
+turnaround, each prop, the location) on a black background, no text. LTX-2.3's
+ingredients IC-LoRA conditions each clip on that sheet (see the comfyui skill's
+`ingredients` command). This is **video-level** (it replaces/augments the ia2v
+anchor), not an image anchor type.
+
+### CLI — `generate_reference_sheet.py`
+
+Generates the panels via flux2 (character turnaround via `multiprompt`,
+props/location via `t2i`) and tiles them with the comfyui skill's
+`make_reference_sheet.build_sheet`:
+
+```
+python3 /home/sandbox/.openclaw/skills/storyboard/scripts/generate_reference_sheet.py \
+    --out        project_sheet.png \
+    --character   marco.png \
+    --character-desc "Marco, early-30s fisherman, tan skin, short black hair, stubble, red flannel" \
+    --angle      "front-facing head-and-shoulders portrait" \
+    --angle      "full-body three-quarter view" \
+    --prop       "trident=an ornate golden three-pronged trident" \
+    --prop       "lantern=an old brass oil lantern" \
+    --location   "weathered wooden pier at golden hour, calm sea, distant lighthouse" \
+    --width 768 --height 448          # = the project render WxH (sheet aspect must match)
+```
+
+- `--prop name=description` → a flux2 `t2i` panel; `--prop name=path.png` → uses
+  that image directly (skip generation). `--location` likewise.
+- Without `--character` it makes a single identity panel from `--character-desc`.
+- `--style "<tail>"` appends a look to every panel; `--grid RxC` forces layout.
+- Idempotent (skips if `--out` exists; `--force` to re-render).
+
+Feed the sheet to `comfy_graph.py ingredients --sheet project_sheet.png --prompt
+…`, or set a project-level `reference_sheet:` + per-scene `mode: ingredients` in
+music-video / drama-video (see those SKILL.md). **Author the sheet at the project
+render aspect** — the ingredients graph stretches it to the output size, so a
+mismatched aspect distorts the reference. Trained buckets are landscape
+(768×448, 960×544); portrait is off-bucket — evaluate.
+
+### Sheet vs per-shot anchor — when to use which
+
+| Want | Use |
+|---|---|
+| Identity stable across a *whole* song/drama, many shots | One project **reference sheet** + `mode: ingredients` |
+| A specific *scene* composition (character in this setting, this light) | Per-shot **flux2 anchor** (`generate_anchor.py`) + ia2v |
+| Both | Sheet for cast/prop consistency, anchors for hero shots — they compose |
+
 ## Python API — `lib/prompts.py`
 
 Orchestrators can also import the prompt-preprocessing helpers directly:
@@ -163,4 +214,4 @@ be included automatically.
 - `references/style-tails.md` — preset style suffixes by aesthetic.
 - `references/camera-loras.md` — valid LTX camera LoRA names
   (relevant for downstream video, not for anchor generation).
-- `comfyui` skill — the flux2 `t2i`/`i2i`/`i2i2`/`multiprompt` subcommands this CLI wraps.
+- `comfyui` skill — the flux2 `t2i`/`i2i`/`i2i2`/`multiprompt` subcommands this CLI wraps, plus the `ingredients` command and `make_reference_sheet.py` tiler that `generate_reference_sheet.py` feeds.
