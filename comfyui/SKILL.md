@@ -5,7 +5,9 @@ description: >
   when asked to create images, edit photos, generate videos, or run
   Flux/LTX2/Wan workflows. Triggers on: generate an image, create a video,
   Flux2, ComfyUI, text-to-image, image-to-image, image-to-video, scene
-  generation, TTS, voice clone, workflow.
+  generation, TTS, voice clone, workflow, WebGL-generated spatial video guides,
+  depth guidance, Union video control, Canny shape-to-prop guidance,
+  first-frame stitching, and embedded video workflow provenance.
 ---
 
 # ComfyUI Skill
@@ -114,6 +116,31 @@ python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_query.py stats
 # Run workflow from JSON
 python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_run.py workflow.json --output-dir /tmp/imgs
 ```
+
+## Guide video generation with authored WebGL spaces
+
+For camera paths through a 3D environment, render registered RGB and depth from
+one WebGL scene, then use **LTX Union IC-LoRA control** (the LTX route for
+ControlNet-style depth/edge guidance), not merely an RGB first-frame reference.
+Read [the WebGL-to-LTX recipe](references/webgl-video-guidance.md) before authoring
+or submitting: it includes scene construction, depth calibration, lossless
+exports, the executed two-pass node wiring and verification gates.
+For stitching, use first-frame conditioning **1.0 in both applicable passes**,
+not soft 0.7 guidance,
+and verify the actual shared boundary before dropping any generated frame.
+The next integration harness is Easel Client storyboards and WebGL exports.
+
+The worked staircase is user-accepted as an illustrative example, not exact
+geometry/camera compliance, optimal strength, or a seamless generated loop.
+The approved faster-Canny carried-props and projected-depth sculpture pilots
+have verified local outputs, including a controlled video-strength 0.6 vs 1.0
+comparison; exact speed/topology, perfect looping and universal improvement are
+not certified. The reference separates video-control, image-reference and LoRA
+strengths, documents source-audio accounting and audits embedded MP4 graph
+metadata as untrusted data. At source `394142a`, the curated LTX-2.5 CLI/profile
+has no Union control-video input. Use the reviewed explicit graph only within
+authorised prototype scope; do not invent flags, silently switch profiles,
+auto-execute attached graphs or imply Easel API/client guide support.
 
 ## Working with named character references
 
