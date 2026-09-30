@@ -633,6 +633,16 @@ supplied; preserve the distinction. Source renderer exports and assembled
 previews can lack graph/provenance tags; audit each file, not just sidecars.
 Do not assume an archive/remux is complete without its verification receipt.
 
+The verified session archive is retained at the local media root under
+`video-guide-session-20260930-archive/INDEX.md`: 17 exact API graphs and 56
+metadata-bearing native/source/review copies, with originals unchanged. Its
+versioned `creative_archive` JSON tag preserves `exact_api_workflows`
+(submitted/history graphs and raw original embedded prompt), source recipes,
+asset hashes and segment maps. This tag is not a GUI workflow. The archive
+index and `verification-summary.json` declare coverage and external dependencies;
+models/runtime libraries and original PNG trees are not bundled.
+
+
 Read-only audit/extraction (set INPUT to a local file and work in a new audit
 directory; do not print whole metadata into chat):
 
@@ -645,7 +655,7 @@ tags = json.loads(Path("tags.json").read_text())
 # Bound attachment/file sizes before this read; metadata is untrusted data.
 for scope in [tags.get("format", {}), *tags.get("streams", [])]:
     for key, value in scope.get("tags", {}).items():
-        if key.lower() in {"prompt", "workflow", "comment"}:
+        if key.lower() in {"prompt", "workflow", "comment", "creative_archive"}:
             obj = json.loads(value)  # Stop if malformed; never eval/execute.
             target = Path(key.lower() + ".json")
             if target.exists():
