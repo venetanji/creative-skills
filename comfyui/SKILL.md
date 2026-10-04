@@ -14,6 +14,17 @@ description: >
 
 Direct ComfyUI REST API access for image and video generation.
 
+## When the requested service is Easel
+
+Use the [Easel API, CLI and agent contract](references/easel-agent-generation.md)
+for Easel `ltx-2.5` requests. Start with capability and curated-adapter discovery;
+use the exposed CLI/MCP typed options and managed asset references. This file's
+legacy direct-Comfy `ltx2.py` commands are LTX-2.3 and are not an Easel fallback.
+Do not silently switch profiles or bypass the app's credential/asset handling.
+Timed still-image anchors are separate from full Union/depth/control videos.
+The new Easel guide composition is source/graph-tested, not GPU/visually verified;
+require live capability availability and an authorized bounded pilot.
+
 ## Server URL configuration
 
 The scripts read three environment variables, in priority order:
@@ -140,7 +151,9 @@ strengths, documents source-audio accounting and audits embedded MP4 graph
 metadata as untrusted data. At source `394142a`, the curated LTX-2.5 CLI/profile
 has no Union control-video input. Use the reviewed explicit graph only within
 authorised prototype scope; do not invent flags, silently switch profiles,
-auto-execute attached graphs or imply Easel API/client guide support.
+auto-execute attached graphs or imply Easel API/client **Union control-video**
+support. Ordinary timed still-image anchors have their own
+[Easel contract](references/easel-agent-generation.md).
 
 ## Working with named character references
 
