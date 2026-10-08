@@ -19,65 +19,39 @@ both song variants to a local directory.
 
 ## Server URL configuration
 
-The scripts read two environment variables, with CLI overrides:
+The Suno server is on Headscale at `http://suno-mcp.tail.ait4x.org`.
+The scripts use `SUNO_MCP_URL` (defaulting to that URL), with `/mcp` for
+JSON-RPC and `/audio/<file>.mp3` for downloads. `SUNO_OUTPUT_DIR` defaults to
+`./outputs/suno`. CLI flags `--url` and `--output-dir` override these values.
 
-| Var | Used by | Falls back to |
-|---|---|---|
-| `SUNO_MCP_URL`    | every command; `<base>/mcp` for JSON-RPC, `<base>/audio/<file>.mp3` for downloads | `http://localhost:8190` |
-| `SUNO_OUTPUT_DIR` | where generated MP3s land | `./outputs/suno` (relative to CWD) |
+On an ordinary Headscale-connected client, use the URL directly. The current
+OpenClaw gateway also resolves this hostname through its Headscale sidecar.
+The old media relay and Tailscale-SaaS Suno endpoint are retired.
 
-CLI flags override env vars on every invocation: `--url URL` and `--output-dir DIR`.
-
-**Defaults**: a fresh clone with no env vars set assumes a Suno MCP server
-listening on `http://localhost:8190` — the conventional port for the
-`bootstrap/media-relay` Worker bridge that fronts Suno. The same bridge serves
-`/mcp` (control plane) and `/audio/<file>.mp3` (downloads), so one base URL
-covers both.
-
-**Per-tailnet examples** — what the operator actually uses:
-
-| agent location | `SUNO_MCP_URL` |
-|---|---|
-| `tail9683c` (operator's personal tailnet) | `https://suno-mcp.tail9683c.ts.net` |
-| `tail74c072` (`tag:overlord` sandboxes)   | `https://media-relay.tail74c072.ts.net:8190` |
-
-Future media-relays plug in cleanly by exposing the same `/mcp` + `/audio`
-surface on their own port; just point `SUNO_MCP_URL` at the new host.
-
-**OpenClaw sandbox**: agents in an agentic-media sandbox have `SUNO_MCP_URL`
-(and `SUNO_OUTPUT_DIR`) injected at boot via the per-sandbox `credentials.env`
-propagation; agent prompts and skill code don't need to mention them.
-
-## Script paths (use absolute; tilde expansion is unreliable under `exec`)
-
-Resolve the script once at the top of the agent run with `find`, then call it
-by absolute path. The skill works equally well from a host install, an
-OpenClaw sandbox checkout, or a fresh `git clone`.
-
-**Sandboxed agents (commons / per-role lordships)**: the skill bundle is
-RO-bind-mounted at `/agentic-media/creative-skills/`, so the script is
-always at `/agentic-media/creative-skills/suno-mcp/scripts/generate_song.py`.
-Use the absolute path directly — no `find` needed.
-
-**Host or fresh clone**: include `/agentic-media` in the search roots
-*before* the legacy paths, since both can be present simultaneously
-when working from an overlord workspace:
+Thor's native execution node uses a userspace Headscale client alongside the
+separate host Tailscale failsafe. For Suno commands on that node, explicitly
+set this command's proxy environment; do not set a global system proxy:
 
 ```bash
-SCRIPT=$(find /agentic-media "$HOME" /home /workspace -maxdepth 7 \
-        -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
-python3 "$SCRIPT" --lyrics='...' --tags='...' --title='...'
+/usr/bin/env SUNO_MCP_URL=http://suno-mcp.tail.ait4x.org \
+  http_proxy=http://127.0.0.1:1055 https_proxy=http://127.0.0.1:1055 \
+  no_proxy= NO_PROXY= \
+  python3 /home/venetanji/dev/creative-skills/suno-mcp/scripts/generate_song.py \
+  --input-json /absolute/path/to/song-spec.json
 ```
 
-The legacy form `find "$HOME" /home /workspace ...` silently fails in
-agentic-media sandboxes because creative-skills are not mirrored under
-`/workspace/skills/` — they ship via the `/agentic-media` canonical bind.
+Port 1055 is a loopback-only outbound proxy provided by `tailscale-hs`, the
+Headscale client, not the host's Tailscale-SaaS daemon. Browser login is at the
+same Suno base URL. Music generation is not part of connectivity verification.
 
-⚠️ `--tags` = full producer brief (NOT keywords). Read first: `cat <skill-dir>/references/style-guide.md`.
+## Script paths
 
-**Lyrics:** `[Verse]`/`[Chorus]`/`[Bridge]`/`[Instrumental]` tags — guide: `cat <skill-dir>/references/lyrics-guide.md`. Read it before drafting — it's the difference between AI-sounding lyrics and lyrics worth listening to.
-
-**🚨 Two variants per generation.** Suno *always* returns 2 takes from a single request. The helper script downloads BOTH (`local_files` is a list). Present both to the user and let them choose — agents that send only the first systematically lose half the value of every generation. The full output JSON has `local_files` (all variants) and `local_file` (variant 1, kept for backward compat).
+Canonical source on Thor is `/home/venetanji/dev/creative-skills/suno-mcp`.
+The gateway's installed copy is
+`/home/venetanji/.openclaw/skills/suno-mcp` inside the gateway, backed by
+`/home/venetanji/.openclaw-gateway/skills/suno-mcp` on Thor.
+Use an absolute script path and an explicit output directory for each task.
+Historical lordship and media-relay paths are not current execution routes.
 
 ## Quick Start
 
@@ -101,16 +75,21 @@ UTF-8 are safe as-is. Target file: anywhere writable, e.g.
   "negative_prompt": "",
   // Optional:
   // "instrumental": true,
-  // "output_dir":   "/workspace/media/outbound"
+  "output_dir":       "/absolute/path/to/output"
 }
 ```
 
 ### Step 2 — call generate_song.py via the `exec` tool
 
-Single argument, no shell quoting of user content, passes preflight cleanly:
+Single argument, no shell quoting of user content, passes preflight cleanly.
+On Thor, keep the Headscale proxy settings scoped to this command; another
+Headscale-connected client can omit those proxy assignments:
 
 ```bash
-python3 /agentic-media/creative-skills/suno-mcp/scripts/generate_song.py \
+/usr/bin/env SUNO_MCP_URL=http://suno-mcp.tail.ait4x.org \
+  http_proxy=http://127.0.0.1:1055 https_proxy=http://127.0.0.1:1055 \
+  no_proxy= NO_PROXY= \
+  python3 /home/venetanji/dev/creative-skills/suno-mcp/scripts/generate_song.py \
   --input-json /workspace/.suno/neon-highways.json
 ```
 
@@ -145,18 +124,6 @@ python3 generate_song.py --input-json /workspace/.suno/song.json --title "Take 2
 
 For instrumental tracks, set `"instrumental": true` in the JSON (or
 pass `--instrumental` on the CLI).
-
-### Sandbox / host path lookup
-
-In agentic-media sandboxes the script is always at
-`/agentic-media/creative-skills/suno-mcp/scripts/generate_song.py`
-(via the canonical `/agentic-media:ro` bind) — use the absolute path.
-For host / fresh-clone work outside a sandbox:
-
-```bash
-SCRIPT=$(find /agentic-media "$HOME" /home /workspace -maxdepth 7 \
-        -name generate_song.py -path '*/suno-mcp/scripts/*' 2>/dev/null | head -1)
-```
 
 ## Importing an existing Suno song
 
@@ -346,7 +313,7 @@ python3 generate_song.py --dry-run \
 
 ## Troubleshooting
 
-- **Connection refused / DNS error**: `SUNO_MCP_URL` is wrong or unreachable. Check the per-tailnet table above; from a sandbox, confirm `credentials.env` exported `SUNO_MCP_URL`.
+- **Connection refused / DNS error**: verify `SUNO_MCP_URL` resolves to `http://suno-mcp.tail.ait4x.org` and that the client has the intended Headscale route. On Thor's native execution node, use the command-scoped proxy settings shown above.
 - **`HTTP 400 Bad Request: Missing session ID`**: the script's MCP client forgot to send `mcp-session-id` after `initialize`. This shouldn't happen in the bundled client — if you see it, the script is stale, re-import.
 - **Login required**: the Suno MCP server needs a one-time Google login via the `suno_login` MCP tool. Connect to the server's noVNC URL and complete the OAuth dance; the session persists in the saved Chrome profile.
 - **Wrong parameter name**: Use `lyrics`, not `prompt` (deprecated).
@@ -357,9 +324,6 @@ python3 generate_song.py --dry-run \
 
 ## Audio URL pattern
 
-The audio URL is always `${SUNO_MCP_URL}/audio/<short>.mp3` — the same Worker
-bridge that fronts `/mcp` also serves the downloaded files, so there is no
-separate hostname or port to track. The script rebuilds this URL from
-`SUNO_MCP_URL` after every `download_song` call, ignoring any host embedded
-in the server's response (which is often the server's internal `0.0.0.0`
-binding and unreachable off-host).
+The audio URL is `${SUNO_MCP_URL}/audio/<short>.mp3`. The script rebuilds it
+from the configured server URL after every `download_song` call, ignoring any
+host embedded in the server response that may be an internal bind address.

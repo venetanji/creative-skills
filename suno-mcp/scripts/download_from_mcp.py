@@ -9,11 +9,11 @@ mcporter / npx dependency.
 Usage:
   download_from_mcp.py <song_id>
   download_from_mcp.py <song_id> --output-dir /tmp/songs
-  download_from_mcp.py <song_id> --url http://localhost:8190
+  download_from_mcp.py <song_id> --url http://suno-mcp.tail.ait4x.org
 
 Env (CLI flags override):
   SUNO_MCP_URL      Base URL of the Suno MCP server (default
-                    ``http://localhost:8190``). The MCP endpoint is at
+                    ``http://suno-mcp.tail.ait4x.org``). The MCP endpoint is at
                     ``<base>/mcp`` and audio at ``<base>/audio/<file>.mp3``.
   SUNO_OUTPUT_DIR   Where to save the MP3 (default ``./outputs/suno``).
 """
