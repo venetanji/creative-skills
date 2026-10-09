@@ -32,6 +32,7 @@ python3 scripts/comfy_graph.py multiprompt --image a.png --prompts "angle1\nangl
 python3 scripts/comfy_graph.py t2v   --prompt "..."  --seconds 10        # LTX-2.3 text-to-video
 python3 scripts/comfy_graph.py i2v   --image ref.png --prompt "..."      # LTX-2.3 image-to-video
 python3 scripts/comfy_graph.py ia2v  --image ref.png --audio a.mp3 ...   # LTX-2.3 audio-reactive video
+python3 scripts/comfy_graph.py sam3d --video person.mp4 --seconds 5    # animated human GLB + mesh-overlay MP4
 python3 scripts/comfy_graph.py flf2v --first a.png --last b.png ...      # LTX-2.3 first-last-frame (default fps=25)
 python3 scripts/comfy_graph.py continuation  --prev_video prev.mp4 \
         --prompt "..."  --seconds 8  --audio slice.mp3                   # LTX-2.3 extend an existing clip
@@ -49,7 +50,12 @@ python3 scripts/comfy_graph.py dump  t2i --prompt "..."                  # print
 
 Add `dump` as a prefix to any workflow command for a side-effect-free preview of the workflow JSON. Useful for diffing against `object_info` to detect node-class drift after a ComfyUI upgrade.
 
-Flags shared across video commands: `--fps`, `--width`, `--height`, `--seconds`, `--seed`, `--negative`, `--camera-lora {static|dolly-{in,out,left,right}|jib-{up,down}}`, `--camera-lora-strength`, `--fast` (skip 2-pass refine).
+Flags shared across LTX video commands: `--fps`, `--width`, `--height`, `--seconds`, `--seed`, `--negative`, `--camera-lora {static|dolly-{in,out,left,right}|jib-{up,down}}`, `--camera-lora-strength`, `--fast` (skip 2-pass refine).
+
+SAM 3D Body uses the native tracking, person detection, camera estimation, and
+body-prediction pipeline to produce an animated GLB plus an overlay video.
+See [`comfyui/references/sam3d-body.md`](comfyui/references/sam3d-body.md) for
+model downloads, memory controls, and offline/live tests.
 
 Plus `video_join.py` (ffmpeg via uv) for post-assembly: `concat`, `trim`, `first-frame`, `last-frame`. PEP 723 inline metadata so `imageio-ffmpeg` pulls itself.
 
@@ -164,7 +170,7 @@ The scripts read three env vars, in priority order:
 | Var | Used by | Falls back to |
 |---|---|---|
 | `COMFY_URL_FLUX`  | image / TTS / audio commands | `COMFY_URL` |
-| `COMFY_URL_VIDEO` | LTX video commands             | `COMFY_URL` |
+| `COMFY_URL_VIDEO` | LTX video / SAM 3D Body commands | `COMFY_URL` |
 | `COMFY_URL`       | single-server fallback         | `http://localhost:8188` |
 
 A fresh clone with no env vars set assumes a ComfyUI server on `http://localhost:8188` — the default port when ComfyUI is started via `python main.py` or Docker.

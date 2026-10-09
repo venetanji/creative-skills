@@ -3,7 +3,8 @@ name: comfyui
 description: >
   Generate images and videos using ComfyUI workflows via direct REST API. Use
   when asked to create images, edit photos, generate videos, or run
-  Flux/LTX2/Wan workflows. Triggers on: generate an image, create a video,
+  Flux/LTX2/Wan workflows, or extract animated human meshes with SAM 3D Body.
+  Triggers on: generate an image, create a video, SAM 3D Body, motion capture,
   Flux2, ComfyUI, text-to-image, image-to-image, image-to-video, scene
   generation, TTS, voice clone, workflow.
 ---
@@ -19,7 +20,7 @@ The scripts read three environment variables, in priority order:
 | Var | Used by | Falls back to |
 |---|---|---|
 | `COMFY_URL_FLUX`  | image / TTS / audio commands (`t2i`, `i2i`, `tts`, `stems`, `stt`, `vconcat`, `last_frame`) | `COMFY_URL` |
-| `COMFY_URL_VIDEO` | LTX video commands (`t2v`, `i2v`, `ia2v`, `flf2v`, `multiguide`, `transition`, `continuation`) | `COMFY_URL` |
+| `COMFY_URL_VIDEO` | LTX video and SAM 3D Body commands (`t2v`, `i2v`, `ia2v`, `flf2v`, `multiguide`, `transition`, `continuation`, `sam3d`) | `COMFY_URL` |
 | `COMFY_URL`       | single-server fallback for everything | `http://localhost:8188` |
 
 **Defaults**: a fresh clone with no env vars set assumes a ComfyUI server at `http://localhost:8188` — the standard port when you start ComfyUI manually (`python main.py`) or via Docker.
@@ -53,13 +54,13 @@ To use LTX-2.3 video generation, download these models to your ComfyUI installat
 mkdir -p checkpoints text_encoders loras latent_upscale_models
 
 wget -P checkpoints https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors
-wget -P text_encoders https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors
+wget -P text_encoders https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp8_e4m3fn.safetensors
 wget -P loras https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors
 ```
 
 **One-liner for copy-paste:**
 ```bash
-cd /path/to/ComfyUI/models && mkdir -p checkpoints text_encoders loras && wget -P checkpoints https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors && wget -P text_encoders https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors && wget -P loras https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors
+cd /path/to/ComfyUI/models && mkdir -p checkpoints text_encoders loras && wget -P checkpoints https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-dev-fp8.safetensors && wget -P text_encoders https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp8_e4m3fn.safetensors && wget -P loras https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-22b-distilled-lora-384.safetensors
 ```
 
 **Alternative - distilled checkpoint (smaller, faster):**
@@ -78,16 +79,13 @@ wget -P text_encoders https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_
 |-------|----------|------|---------|
 | `ltx-2.3-22b-dev-fp8.safetensors` | `checkpoints/` | ~22B params | Main video diffusion model |
 | `ltx-2.3-22b-distilled-fp8.safetensors` | `checkpoints/` | ~22B params | Distilled 4-step version |
-| `gemma_3_12B_it_fp4_mixed.safetensors` | `text_encoders/` | ~12B params | Text encoder (CLIP) - fp4 |
 | `gemma_3_12B_it_fp8_e4m3fn.safetensors` | `text_encoders/` | ~12B params | Text encoder (CLIP) - fp8 **(recommended)** |
 | `ltx-2.3-22b-distilled-lora-384.safetensors` | `loras/` | Small | 4-step distilled LoRA |
 | `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` | `latent_upscale_models/` | Small | Latent upscaler (optional) |
 
 ### Text Encoder Path
 
-⚠️ **Important**: When using `LTXAVTextEncoderLoader`, the text encoder path must include the subdirectory:
-- Correct: `split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors`
-- Or use `gemma_3_12B_it_fp8_e4m3fn.safetensors` if downloaded directly to `text_encoders/`
+⚠️ **Important**: `LTXAVTextEncoderLoader` must use a model name offered by the server. This skill defaults to `gemma_3_12B_it_fp8_e4m3fn.safetensors`, downloaded directly to `text_encoders/`.
 
 The skill defaults to `gemma_3_12B_it_fp8_e4m3fn.safetensors` (fp8 variant) for faster inference.
 
@@ -114,6 +112,19 @@ python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_query.py stats
 # Run workflow from JSON
 python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_run.py workflow.json --output-dir /tmp/imgs
 ```
+
+## SAM 3D Body: video to animated human mesh
+
+Use `comfy_graph.py sam3d --video person.mp4 --seconds 5` to extract an
+animated full-body GLB and a mesh-overlay MP4. Local videos upload automatically;
+server-side `input/` names also work. Routes to `COMFY_URL_VIDEO` and preserves
+the source FPS and audio. Requires native SAM3 / SAM3DBody / MoGe nodes and four
+models; see [SAM 3D Body setup and testing](references/sam3d-body.md).
+
+Start with `--seconds 0.25 --batch-size 1` for a smoke test. Defaults enable
+tracking, RT-DETR, MoGe camera estimation, face expressions, hand refinement,
+and temporal smoothing. For limited VRAM, reduce the batch size first; only
+disable tracking on single-person clips. `dump sam3d` performs no uploads.
 
 ## Working with named character references
 
@@ -305,6 +316,7 @@ Covers: Flux2 t2i, t2i+LoRA, i2i, angles, TTS, LTX-2.3 t2v, LTX-2.3 i2v.
 | `tts` | Text-to-speech (Qwen3 TTS) | `--text`, `--prefix` |
 | `stems` | Vocals + instrumental split (MelBandRoFormer) | `--audio`, `--model`, `--prefix` |
 | `stt` | Whisper transcription → txt + word/segment SRTs | `--audio`, `--model_size large-v3-turbo`, `--language auto`, `--prefix` |
+| `sam3d` | Video → animated human GLB + mesh-overlay MP4 | `--video`, `--seconds`, `--start-time`, `--batch-size`, `--no-tracking`, `--no-moge`, `--no-face`, `--export-style body_mesh` |
 | `vconcat` | Concatenate clips, optionally with audio | `--videos a.mp4,b.mp4,...`, `--audio`, `--fps 24`, `--trim_durations`, `--trim_starts`, `--fast` / `--no-fast` |
 | `last_frame` | Extract last frame from a **server-side** video path | `--video_path` (must be an absolute path on the ComfyUI server, not a local file) |
 | `run` | Submit any workflow JSON (file or stdin) | `--file workflow.json` or `cat wf.json \| ... run` |
@@ -356,7 +368,7 @@ places them in the right spot.
 ### LTX-2.3 (video) — two-pass refine pattern
 
 - **Checkpoint:** `ltx-2.3-22b-dev-fp8.safetensors`
-- **Text Encoder:** `gemma_3_12B_it_fp4_mixed.safetensors` via `LTXAVTextEncoderLoader`
+- **Text Encoder:** `gemma_3_12B_it_fp8_e4m3fn.safetensors` via `LTXAVTextEncoderLoader`
 - **Audio VAE:** via `LTXVAudioVAELoader` (uses same ckpt_name)
 - **Upscaler (between passes):** `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` via `LatentUpscaleModelLoader`
 - **LoRA:** `ltx-2.3-22b-distilled-lora-384.safetensors` at **strength 0.6** — applied on ALL flows (t2v/i2v/ia2v/flf2v). This reproduces the distilled checkpoint behaviour on top of the dev-fp8 checkpoint we have installed; without it the 8-step schedule under-denoises and output is badly blurred.
@@ -498,9 +510,7 @@ Use: `python3 /home/sandbox/.openclaw/skills/comfyui/scripts/comfy_query.py hist
 with the LTX-2.3 checkpoint, not UMT5 or other CLIP models.
 
 ### LTX-2.3 "Value not in list" for text_encoder
-→ The text encoder path must include the subdirectory if using the fp4 variant:
-- Correct: `split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors`
-- Or use fp8 variant directly: `gemma_3_12B_it_fp8_e4m3fn.safetensors`
+→ Use a text encoder shown by the server's `LTXAVTextEncoderLoader` choices. This skill defaults to `gemma_3_12B_it_fp8_e4m3fn.safetensors`.
 
 For API details → `references/api.md`
 For prompt tips → `references/prompt-patterns.md`

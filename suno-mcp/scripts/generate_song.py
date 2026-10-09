@@ -15,7 +15,7 @@ Usage:
 
 Env:
   SUNO_MCP_URL      Base URL of the Suno MCP server. Default
-                    ``http://localhost:8190``. The MCP endpoint is
+                    ``http://suno-mcp.tail.ait4x.org``. The MCP endpoint is
                     ``<SUNO_MCP_URL>/mcp`` and downloaded songs are
                     served at ``<SUNO_MCP_URL>/audio/<file>.mp3``.
   SUNO_OUTPUT_DIR   Where to save downloaded MP3s. Default
@@ -36,7 +36,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-DEFAULT_BASE = "http://localhost:8190"
+DEFAULT_BASE = "http://suno-mcp.tail.ait4x.org"
 DEFAULT_OUTPUT_DIR = "./outputs/suno"
 
 

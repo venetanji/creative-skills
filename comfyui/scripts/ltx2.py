@@ -24,7 +24,7 @@ iteration, not final output.
 
 Models required on the server:
   checkpoints/ltx-2.3-22b-dev-fp8.safetensors
-  text_encoders/gemma_3_12B_it_fp4_mixed.safetensors
+  text_encoders/gemma_3_12B_it_fp8_e4m3fn.safetensors
   loras/ltx-2.3-22b-distilled-lora-384.safetensors
   latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
 """
@@ -34,7 +34,7 @@ import time
 
 
 CKPT = "ltx-2.3-22b-dev-fp8.safetensors"
-TEXT_ENCODER = "gemma_3_12B_it_fp4_mixed.safetensors"
+TEXT_ENCODER = "gemma_3_12B_it_fp8_e4m3fn.safetensors"
 UPSCALER = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 DISTILLED_LORA = "ltx-2.3-22b-distilled-lora-384.safetensors"
 NEG_DEFAULT = "pc game, console game, video game, cartoon, childish, ugly, blurry, low quality, watermark, distorted, still frame, text, captions, subtitles, signs, logos, lettering, typography, words, letters"

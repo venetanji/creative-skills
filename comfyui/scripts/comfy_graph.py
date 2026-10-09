@@ -20,6 +20,7 @@ Usage:
   # CLI flags after --input-json still override individual JSON values.
   python comfy_graph.py stems  --audio song.mp3          # vocals + instrumental
   python comfy_graph.py stt    --audio vocals.flac       # whisper transcription
+  python comfy_graph.py sam3d --video person.mp4 --seconds 5  # animated GLB + mesh overlay
   python comfy_graph.py vconcat --videos a.mp4,b.mp4,c.mp4 --audio song.mp3 --fps 24
   python comfy_graph.py dump  t2i --prompt "a cat"   # print workflow JSON only
 
@@ -29,7 +30,7 @@ Environment:
                      COMFY_URL=http://localhost:8000 in that case.
   COMFY_URL_FLUX     Override for image / TTS / audio commands. Falls back to
                      COMFY_URL when unset.
-  COMFY_URL_VIDEO    Override for LTX video commands. Use this only when you
+  COMFY_URL_VIDEO    Override for LTX video / SAM 3D Body commands. Use this when you
                      run a separate LTX server on a different host/port; falls
                      back to COMFY_URL.
   OPENCLAW_NOTIFY_TARGET  Default notification target (e.g. discord:123...)
@@ -38,7 +39,7 @@ from __future__ import annotations
 import sys, os, json, time, urllib.request
 from pathlib import Path
 from core import _submit_and_wait, upload_if_local
-import flux2, ltx2, tts, post
+import flux2, ltx2, tts, post, sam3d_body
 from flux2 import (flux2_text_to_image, flux2_single_image_edit, flux2_double_image_edit,
                     flux2_double_image_edit_multiprompt, flux2_multiple_angles,
                     flux2_multi_reference_edit, flux2_multi_reference_edit_multiprompt)
@@ -53,7 +54,7 @@ import core
 # Route video workflows to the video comfy server, image/audio workflows to
 # the flux/default server. Bots submit via this CLI and shouldn't have to
 # worry about which server to target.
-VIDEO_COMMANDS = {"t2v", "i2v", "ia2v", "flf2v", "transition", "multiguide", "continuation"}
+VIDEO_COMMANDS = {"t2v", "i2v", "ia2v", "flf2v", "transition", "multiguide", "continuation", "sam3d"}
 # vconcat uses ComfyUI-FFmpeg nodes (MergingVideoByTwo / AddAudio) — pure
 # CPU stream-copy, no GPU needed, so it goes to the flux server to keep
 # the video GPU free for actual LTX renders.
@@ -282,7 +283,34 @@ def _h_run(opts, seed, prompt):
         return json.load(f)
 
 
+def _h_sam3d(opts, seed, prompt):
+    video = opts.get("video", "")
+    if not video:
+        raise ValueError("sam3d requires --video")
+    if not DUMP_ONLY and Path(video).is_file():
+        video = core.upload_image(video)
+    return sam3d_body.sam3d_video_to_body(
+        video_filename=video, prompt=prompt or "person",
+        seconds=float(opts.get("seconds", 5.0)),
+        start_time=float(opts.get("start_time", 0.0)),
+        filename_prefix=opts.get("prefix", "video/SAM3D_body"),
+        batch_size=int(opts.get("batch_size", 4)),
+        moge_batch_size=int(opts.get("moge_batch_size", 1)),
+        tracking=not opts.get("no_tracking"), moge=not opts.get("no_moge"),
+        face_expression=not opts.get("no_face"),
+        hand_refinement=not opts.get("no_hand_refinement"),
+        overlay=not opts.get("no_overlay"), keep_audio=not opts.get("no_audio"),
+        export_style=opts.get("export_style", "body_mesh"),
+        detection_threshold=float(opts.get("detection_threshold", 0.5)),
+        max_people=int(opts.get("max_people", 4)),
+        body_model=opts.get("body_model", sam3d_body.BODY_MODEL),
+        track_model=opts.get("track_model", sam3d_body.TRACK_MODEL),
+        moge_model=opts.get("moge_model", sam3d_body.MOGE_MODEL),
+        detector_model=opts.get("detector_model", sam3d_body.DETECTOR_MODEL))
+
+
 HANDLERS = {
+    "sam3d": _h_sam3d,
     "t2i": lambda opts, seed, prompt: flux2.flux2_text_to_image(
         prompt=prompt,
         width=int(opts.get("width", 1024)), height=int(opts.get("height", 576)),
@@ -504,7 +532,7 @@ HANDLERS = {
 
 # Commands with non-default timeouts. Values are ints, used as fallback
 # when --timeout isn't passed on the CLI (opts overrides this).
-DEFAULT_TIMEOUTS = {"tts": 120, "stems": 600, "stt": 300, "vconcat": 1200}
+DEFAULT_TIMEOUTS = {"tts": 120, "stems": 600, "stt": 300, "vconcat": 1200, "sam3d": 1800}
 
 
 def main():

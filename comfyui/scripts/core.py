@@ -142,13 +142,9 @@ def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notif
                 with urllib.request.urlopen(req, timeout=15) as r:
                     return json.load(r)
             except urllib.error.HTTPError as e:
-                # 5xx: server error, retry generously. 400 on /prompt: usually
-                # an upload-race (file not yet visible server-side when the
-                # workflow references it) — retry a small number of times
-                # with short backoff; real malformed workflows still fail.
-                retry_400 = (e.code == 400 and url.endswith("/prompt")
-                             and transient < 3)
-                if (500 <= e.code < 600 and transient < max_transient) or retry_400:
+                # A 400 from /prompt is a rejected graph or input and will
+                # not become valid by submitting the same workflow again.
+                if 500 <= e.code < 600 and transient < max_transient:
                     transient += 1
                     wait = min(20, 2 * transient)
                     print(f"[transient HTTP {e.code}] {url}; retry {transient}/{max_transient} in {wait}s",
@@ -184,6 +180,10 @@ def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notif
             if st and st != last_st:
                 print(f"[{st}]", file=sys.stderr)
                 last_st = st
+            if st == "error":
+                errors = [message[1] for message in entry.get("status", {}).get("messages", [])
+                          if len(message) >= 2 and message[0] == "execution_error"]
+                raise RuntimeError(f"ComfyUI execution failed for {prompt_id}: {errors or entry['status']}")
             if outputs:
                 _save_assets(entry, output_dir, notify=notify, caption_template=caption_template, user_prompt=user_prompt)
                 return prompt_id
@@ -199,10 +199,17 @@ def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, capti
     seen = set()
     saved_files = []
     for nout in entry.get("outputs", {}).values():
-        for v in nout.values():
+        asset_values = list(nout.values())
+        preview = nout.get("result")
+        if (isinstance(preview, list) and preview and isinstance(preview[0], str)
+                and preview[0].endswith(".glb")):
+            asset_values.append([{"filename": preview[0], "type": "output"}])
+        for v in asset_values:
             if isinstance(v, list):
                 for item in v:
                     if isinstance(item, dict) and "filename" in item:
+                        if item.get("type") == "input":
+                            continue
                         fname = item["filename"]
                         if fname in seen:
                             continue
