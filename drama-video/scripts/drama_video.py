@@ -378,7 +378,46 @@ def _render_shot(spec: dict, project: Path, idx: int, shot: dict) -> None:
     #      with prev-last.png as a secondary image_ref for lipsync identity.
     #   3. Has flux2 anchor or fresh image path → ia2v with that image.
     use_continuation = bool(shot.get("continue_from_prev")) and idx > 1
-    if use_continuation:
+    # `mode: ingredients` → LTX-2.3 reference-sheet IC-LoRA, conditioned on ONE
+    # project sheet (project-level `reference_sheet:` or a per-shot override) for
+    # consistent recurring characters / props / locations. Checked FIRST so it is
+    # authoritative regardless of image_path / continuation.
+    #
+    # SILENT-INSERT: ingredients renders carry no useful audio and do NOT lipsync.
+    # Drama is dialogue-first, so use this only for shots that don't need on-screen
+    # speech (B-roll, establishing, inserts); identity comes from the sheet, not the
+    # identity-anchor. The full audio track is muxed over the timeline at assemble.
+    shot_mode = shot.get("mode") or (spec.get("video") or {}).get("mode")
+    if shot_mode == "ingredients":
+        sheet = shot.get("reference_sheet") or spec.get("reference_sheet")
+        if not sheet:
+            sys.exit(f"shot {idx}: mode=ingredients needs `reference_sheet:` "
+                     f"(set it project-level or on the shot)")
+        sheet_path = (Path(sheet) if Path(sheet).is_absolute()
+                      else (project / sheet)).resolve()
+        if not sheet_path.exists():
+            sys.exit(f"shot {idx}: reference_sheet {sheet_path} does not exist")
+        # Default to the ingredients LoRA's tuned negative — drop the project's
+        # generic video.negative unless the shot sets its own.
+        ing_common, _skip = [], False
+        for tok in common:
+            if _skip:
+                _skip = False; continue
+            if tok == "--negative":
+                _skip = True; continue
+            ing_common.append(tok)
+        ing_extras: list[str] = []
+        if shot.get("negative"):
+            ing_extras += ["--negative", str(shot["negative"])]
+        ls = shot.get("ingredients_lora_strength")
+        if ls is not None:
+            ing_extras += ["--lora_strength", str(float(ls))]
+        rs = shot.get("ingredients_reference_strength")
+        if rs is not None:
+            ing_extras += ["--reference_strength", str(float(rs))]
+        cmd = ["python3", str(COMFY), "ingredients",
+               "--sheet", str(sheet_path)] + ing_extras + ing_common
+    elif use_continuation:
         prev_label = spec["shots"][idx - 2].get("label", "shot")
         prev_mp4 = project / "shots" / f"{_shot_stem(idx - 1, prev_label)}.mp4"
         if not prev_mp4.exists():

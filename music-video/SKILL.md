@@ -86,13 +86,53 @@ downstream scene — don't skip the gates unless you're sure.
    — that re-encoded copy is fine for transcription but do NOT use it as
    the ia2v audio source (LTX's audio VAE wants the full-quality input).
 
+   **If Suno gave you a stem pack (zip of `.wav` + `.mid` per stem),
+   unpack it first** so the MIDI is available to the bar-grid analyser:
+   ```bash
+   unpack_suno_pack.py <Title>.zip --out <project-dir>
+   # → <project>/stems/{vocals,drums,bass,guitar,synth,fx,backing_vocals}.wav
+   # → <project>/midi/<same>.mid
+   ```
+   Skipping this step costs you the **drum tempo map** and the
+   **per-stem MIDI phrase boundaries** — both crucial for the next step.
+
+5b. **OPTIONAL but recommended — combine MIDI bar grid + vocal phrases
+    + Whisper STT into a ranked scene-boundary proposal.** This catches
+    musically-wrong cuts that the segment SRT alone won't:
+
+    ```bash
+    analyze_midi.py  <project-dir>                    # report tempo / bars
+    analyze_song.py  <project-dir> \
+        --whisper-srt <project>/<prefix>_segments.srt \
+        --scenes <N> --min-spacing 4
+    ```
+
+    The output is a table of `[start, dur, lyric]` per scene, snapped to
+    bar boundaries where possible, that you can drop into `scenes:`.
+    Mostly: the song's BPM dictates a bar length (e.g. 123 BPM → 1.944s);
+    every scene end that doesn't land within ~100ms of a bar will feel
+    musically off in playback. Use this output as the starting point even
+    if you adjust some boundaries by hand.
+
 6. **Add the scene list to `song.yaml`** — each scene: `label`, `start_sec`,
    `duration_sec`, `prompt`, `image` (`@anchor | @last | path`). Optionally
    give a scene an `anchor:` block to pre-render a flux2 key frame for it.
-   Lift `start_sec`/`duration_sec` straight from `<prefix>_segments.srt`
-   (step 5); each scene's span should land on a vocal-phrase boundary,
-   and total duration must equal the song length (probe with
-   `ffmpeg -i song.mp3` if unknown).
+   Lift `start_sec`/`duration_sec` straight from `analyze_song.py`'s
+   output (step 5b) when you have a MIDI, or from `<prefix>_segments.srt`
+   (step 5) otherwise. Total duration must equal the song length (probe
+   with `ffmpeg -i song.mp3` if unknown).
+
+   **Validate every boundary against `<prefix>_words.srt` before
+   rendering.** Segment-level SRT marks line endings, but vocalists
+   routinely sustain final phonemes 0.3-1s past the line's nominal end —
+   if your scene ends inside that sustain, LTX cuts the operator's mouth
+   in the middle of "do" or "say" and the next scene's overlay audio
+   carries the lingering vowel. Open `_words.srt`, find the line you're
+   cutting on, and ensure your `start_sec + duration_sec` lands on the
+   END of the last word in the line (or in a clear silent gap), not the
+   "end" reported by the segment SRT. A 30-line audit script:
+   `python3 -c "import re; ..."` over `_words.srt` flagging boundaries
+   that fall inside word spans is faster than reviewing the final video.
 7. **`anchors <spec>`** — flux2 renders the top-level `anchor_image` (from
    `anchor_prompt`, or fallback `title + style`) plus any per-scene anchors.
    Idempotent — skips files already on disk.
@@ -121,6 +161,50 @@ music_video.py all --no-gate <spec>    # skip both gates, full autopilot
 
 Restart-safe throughout: anything already on disk is skipped. Iterate
 individual scenes with `scene N song.yaml`.
+
+## Day-1 decisions (lock these before step 7)
+
+A few choices propagate into every downstream prompt and every render. Flipping
+them mid-pipeline forces you to throw away anchors and redo them. Settle these
+up front, when only `song.yaml` exists and no GPU time has been spent:
+
+| Decision | Where it lives | Why it has to be early |
+|---|---|---|
+| **Aspect & resolution** | `video.resolution: [w, h]` | Hard-coded into every anchor prompt ("vertical 9:16" vs "16:9 widescreen") and every render. This is LTX's **working** resolution; the LTX-2.3 spatial upscaler doubles it for the final output. Common picks: `[832, 448]` (16:9 broadcast → 1664×896 final), `[448, 832]` (9:16 vertical → 896×1664 final), `[576, 1024]` (9:16 a touch larger → 1152×2048 final). Both dims must be multiples of 32. Switching aspect after `anchors` invalidates every PNG. |
+| **Anchor scale** | `video.anchor_scale` | Default `2.0` — flux2 anchors render at `resolution × scale` so they carry detail at the final upscaled video resolution. Larger anchors take longer to render but produce noticeably crisper output. Set `1.0` if you'd rather flux2 work at the working resolution (faster, looser final detail). |
+| **Cast** | `subjects:` + reference photos in the project dir | Each named subject (`operator`, `dancers`, `interviewer`, …) needs (a) a one-line description token and (b) at least one reference image so per-scene `i2i`/`i2i2` anchors can lock identity. Adding a character later means re-rolling every scene they appear in. |
+| **Canonical settings** | `sheets/<setting>.png` (project convention) + `scenes[].anchor.references` | Pre-render one PNG per recurring location (e.g. main stage, b-stage, exterior). Scene anchors `i2i2` against [character, setting] so the world stays visually constant. Without canonical setting refs, each scene anchor invents its own version of the place. |
+| **Lipsync mode** | `video.lipsync_audio` | If you want LTX to lipsync against a vocal-forward remix instead of the mastered mix, supply it now. Switching mid-project means re-rendering every singing scene. |
+| **Number of suno variants** | `suno.runs` (× 2 variants per run) | More variants = more parallel `final_vN.mp4` outputs at assembly time, but every variant runs against the same scene visuals. Setting this *up* later is cheap; setting it *down* means you waste suno credits. |
+| **Quality gates** | `gate_confirm_song`, `gate_confirm_anchors` | Default `true` (recommended). Flip to `false` only when you're fully confident; bad gate-skips waste hours of LTX time on bad anchors. |
+
+Anything else (per-scene prompts, camera LoRAs, transitions on/off, individual
+anchor tweaks) is cheap to iterate on later — those only re-render one scene
+at a time and don't propagate.
+
+## Command index
+
+Every step of the pipeline maps to one CLI subcommand in
+[`scripts/music_video.py`](scripts/music_video.py). The table below
+cross-references each subcommand to its handler in code so authors can read
+the exact behaviour, and lists every spec field the step consumes.
+
+| Step | CLI | Handler | Reads from spec | Writes |
+|---|---|---|---|---|
+|  1  | `init <slug> [--theme=<txt>] [--force]` | [`cmd_init`](scripts/music_video.py#L259) | *(no spec; takes `slug` + `--theme` + `--force`)* | `<workspace>/<slug>/song.yaml` skeleton |
+|  —  | `plan <spec>` | [`cmd_plan`](scripts/music_video.py#L374) | full spec (validation + breakdown) | stdout |
+|  3  | `song <spec>` | [`cmd_song`](scripts/music_video.py#L472) | `title`, `style`, `lyrics`, `suno.runs`, `suno.make_instrumental` | `song.mp3`, `song_v2.mp3`, …, `song_meta.json` |
+|  7  | `anchors <spec>` | [`cmd_anchors`](scripts/music_video.py#L731) → [`_generate_anchor`](scripts/music_video.py#L604) per scene | `anchor_image`, `anchor_prompt`, `subjects`, `scenes[].anchor.*` | `anchor.png` (top-level if missing) + `scenes/NNN-<label>-anchor.png` × N |
+|  9  | `scene N <spec>` | [`cmd_scene`](scripts/music_video.py#L871) | full scene block, `video.*`, `subjects` | `scenes/NNN-<label>.mp4`, `scenes/NNN-<label>-last.png`, `song_slices/NNN-<label>.mp3` |
+|  9  | `scenes <spec>` | [`cmd_scenes`](scripts/music_video.py#L1519) (loops `cmd_scene`) | same | same × N |
+|  9b | `transitions <spec>` | [`cmd_transitions`](scripts/music_video.py#L1149) | `video.transitions.*`, `scenes[].transition_from_prev.*` | `scenes/NNN-<label>-transition.mp4` × (N−1) (only if `video.transitions.enabled`) |
+| 10  | `assemble <spec>` | [`cmd_assemble`](scripts/music_video.py#L1310) | `scenes[].duration_sec`, `video.transitions.*`, `tail_buffer_sec` | `final.mp4`, `final_v2.mp4`, …  (one per song variant) |
+|  *  | `all <spec> [--no-gate]` | [`cmd_all`](scripts/music_video.py#L1420) | `gate_confirm_song`, `gate_confirm_anchors` (+ everything above) | runs `song → anchors → scenes → transitions → assemble`, stops at the two gates by default |
+|  —  | `status <spec>` | [`cmd_status`](scripts/music_video.py#L1545) | scenes list (to enumerate expected outputs) | stdout report (✓/—) per file |
+
+**Quality gates** — `cmd_all` stops after `song` (gate 1) and after `anchors` (gate 2) by default. Override per-spec via `gate_confirm_song: false` / `gate_confirm_anchors: false`, or per-invocation via `--no-gate`.
+
+**Workflow-step column (1, 3, 7, 9, 10)** — corresponds to the numbered phases in [**The loop**](#the-loop) above. Steps 2/4/5/6/8 are human review/decisions (variant pick, STT, scene authoring, anchor review), not CLI commands.
 
 ## Using with openclaw agents
 
@@ -279,6 +363,195 @@ scenes:
     image: "@last"
 ```
 
+### Complete schema reference
+
+Every key the orchestrator reads from a spec, cross-referenced to the
+function in [`scripts/music_video.py`](scripts/music_video.py) that consumes
+it. Anything not listed is silently ignored.
+
+#### Top-level
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `title` | str | `"Untitled"` | [`cmd_song`](scripts/music_video.py#L472) | suno generation title |
+| `style` | str | `""` | [`cmd_song`](scripts/music_video.py#L472) | suno producer-style brief |
+| `lyrics` | str | `""` | [`cmd_song`](scripts/music_video.py#L472) | suno lyrics with `[Verse]`/`[Chorus]` tags |
+| `suno.runs` | int | `1` | [`cmd_song`](scripts/music_video.py#L472) | each run yields 2 variants → `runs * 2` mp3s |
+| `suno.make_instrumental` | bool | `false` | [`cmd_song`](scripts/music_video.py#L472) | request instrumental-only variants |
+| `subjects` | `dict[str, str]` | `{}` | [`_expand_subjects`](scripts/music_video.py#L352) | `{name}` tokens substituted in every prompt (scene + anchor) |
+| `anchor_image` | path | none | [`cmd_anchors`](scripts/music_video.py#L731) | top-level PNG; scenes referencing `image: "@anchor"` use this |
+| `reference_sheet` | path | none | [`cmd_scene`](scripts/music_video.py#L871) | project ingredients reference sheet (black-bg element panels); used by scenes with `mode: ingredients`. Author with `storyboard/generate_reference_sheet.py`. Make its aspect match `video.resolution`. |
+| `anchor_prompt` | str | falls back to `title + style` | [`cmd_anchors`](scripts/music_video.py#L731) | flux2 prompt for the top-level anchor when `anchor_image` is missing |
+| `gate_confirm_song` | bool | `true` | [`cmd_all`](scripts/music_video.py#L1420) | `all` halts after `song` for human review |
+| `gate_confirm_anchors` | bool | `true` | [`cmd_all`](scripts/music_video.py#L1420) | `all` halts after `anchors` for human review |
+| `video` | dict | `{}` | [`_video_spec`](scripts/music_video.py#L310) | renderer config (see below) |
+| `scenes` | list | `[]` | [`cmd_plan`](scripts/music_video.py#L374) | scene list (rendered in order) |
+
+#### `video.*`
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `video.fps` | int | `24` | [`_video_spec`](scripts/music_video.py#L310) | LTX/output frame rate |
+| `video.resolution` | `[w, h]` | `[1024, 576]` | [`_video_spec`](scripts/music_video.py#L310) | LTX **working** resolution (final video is `2×` this — see `anchor_scale`); both dims must be multiples of 32 |
+| `video.anchor_scale` | float | `2.0` | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 anchor renders at `resolution × anchor_scale`. Default `2.0` matches LTX-2.3's spatial upscaler so anchors carry real detail at the **final** output resolution. Set to `1.0` for legacy behaviour (anchor at working res). |
+| `video.negative` | str | `None` | [`_video_spec`](scripts/music_video.py#L310) | negative prompt applied to every LTX scene |
+| `video.tail_buffer_sec` | float | `0.0` | [`_video_spec`](scripts/music_video.py#L310) | extra seconds rendered past EVERY scene's `duration_sec`, trimmed at assembly. Two reasons: (a) lipsync phoneme look-ahead, (b) LTX's ×8 latent temporal compression rounds frame counts DOWN — without this buffer a 4.21s request can land at 4.04s and audio drifts ahead of video. Recommend `0.5` for all music videos. |
+| `video.lipsync_audio` | path | none | [`cmd_scene`](scripts/music_video.py#L871) | vocal-forward remix used for ia2v conditioning only; `song.mp3` stays canonical for assembly |
+| `video.camera_lora` | str | none | [`cmd_scene`](scripts/music_video.py#L871) | default camera LoRA for scenes that don't set their own |
+| `video.camera_lora_strength` | float | `0.8` | [`cmd_scene`](scripts/music_video.py#L871) | default LoRA strength |
+| `video.fast` | bool | `false` | [`cmd_scene`](scripts/music_video.py#L871) | default for `scene[].fast` (skip 2-pass refine; iteration shortcut) |
+| `video.hdr_lora` | dict | none | [`_normalize_loras`](scripts/music_video.py#L887) | LEGACY single-LoRA slot, auto-converted to a 1-entry `loras:` list at render. Keys: `file`, `strength`, `reference_video|reference`, `reference_strength`, `scene_emb`, `scene_emb_strength`. Prefer the new `loras:` list below. |
+| `video.loras` | list | none | [`_normalize_loras`](scripts/music_video.py#L887) | NEW chained LoRA schema. Each entry: `{file, kind: ic_lora, strength, reference_video|reference, reference_strength}`. Today only `kind: ic_lora` is supported; multi-reference IC-LoRA chains error out with a clear message until `ltx2.py` gets a guide-per-loader patch. Back-compat: existing yamls using `hdr_lora:` keep working unchanged. |
+| `video.base_guide_strength` | float | `0.9` | [`cmd_scene`](scripts/music_video.py#L871) | LTX base-pass guide strength for multiguide scenes |
+| `video.refine_guide_strength` | float | `0.7` | [`cmd_scene`](scripts/music_video.py#L871) | LTX refine-pass guide strength for multiguide scenes |
+| `video.transitions` | dict | none | [`cmd_transitions`](scripts/music_video.py#L1149) | per-boundary LTX morph clips (see below) |
+
+#### `video.transitions.*`
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `enabled` | bool | `false` | [`cmd_transitions`](scripts/music_video.py#L1149) | turn the `transitions` stage on |
+| `duration` | float | `2.0` | [`cmd_transitions`](scripts/music_video.py#L1149) | total per-boundary clip length (seconds); `0` = hard cut |
+| `guide_sec` | float | `1.0` | [`cmd_transitions`](scripts/music_video.py#L1149) | real-video guide on each side; middle = `duration − 2·guide_sec` |
+| `fps` | int | inherits `video.fps` | [`cmd_transitions`](scripts/music_video.py#L1149) | transition fps |
+| `prompt` | str | "smooth morph" | [`cmd_transitions`](scripts/music_video.py#L1149) | default morph prompt; overridable per boundary |
+| `default_b_sparse` | str | `"96"` | [`cmd_transitions`](scripts/music_video.py#L1149) | comma list of latent positions for B-side anchor (e.g. `"72,80,88,96"` for 4f into singing) |
+| `fast` | bool | inherits `video.fast` | [`cmd_transitions`](scripts/music_video.py#L1149) | skip 2-pass refine on transition renders |
+
+#### `scenes[]` items
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `label` | str | `"scene"` | [`_scene_stem`](scripts/music_video.py#L300) | short id; used in output filenames (`NNN-<label>.mp4`) |
+| `start_sec` | float | required | [`cmd_scene`](scripts/music_video.py#L871) | scene start in song; drives audio-slice start |
+| `duration_sec` | float | required, ≤15s | [`cmd_scene`](scripts/music_video.py#L871) | scene length; hard cap is `MAX_SCENE_DURATION` (15.0s) |
+| `prompt` | str | required | [`cmd_scene`](scripts/music_video.py#L871) | LTX ia2v prompt (continuous shot; `{subjects}` tokens expand) |
+| `image` | str | `"@anchor"` | [`_resolve_image`](scripts/music_video.py#L813) | first-frame source: `"@anchor"`, `"@last"`, `"@none"` (forces t2v), or a literal path |
+| `anchor` | dict | none | [`_generate_anchor`](scripts/music_video.py#L604) | per-scene flux2 pre-render config (see below); when present, this PNG becomes the scene's first frame |
+| `mode` | str | none | [`cmd_scene`](scripts/music_video.py#L871) | set to `ingredients` to render this scene via the LTX-2.3 reference-sheet IC-LoRA instead of ia2v/t2v (see "Ingredients mode" below). Inherits `video.mode`. |
+| `reference_sheet` | path | inherits top-level | [`cmd_scene`](scripts/music_video.py#L871) | per-scene sheet override for `mode: ingredients` |
+| `ingredients_lora_strength` | float | `1.4` (ltx2 default) | [`cmd_scene`](scripts/music_video.py#L871) | ingredients LoRA strength for this scene |
+| `ingredients_reference_strength` | float | `1.0` (ltx2 default) | [`cmd_scene`](scripts/music_video.py#L871) | `LTXAddVideoICLoRAGuide` strength for this scene |
+| `guides` | list | none | [`cmd_scene`](scripts/music_video.py#L871) (resolved via `storyboard.lib.guides.resolve_guides`) | mid-scene `LTXVAddGuide` entries (see "Multi-guide scenes") |
+| `camera_lora` | str | from `video.camera_lora` | [`cmd_scene`](scripts/music_video.py#L871) | one of `static`, `dolly-in`, `dolly-out`, `dolly-left`, `dolly-right`, `jib-up`, `jib-down` |
+| `camera_lora_strength` | float | from `video.camera_lora_strength` | [`cmd_scene`](scripts/music_video.py#L871) | LoRA strength override |
+| `fast` | bool | inherits `video.fast` | [`cmd_scene`](scripts/music_video.py#L871) | skip 2-pass refine for this scene |
+| `hdr_lora` | dict/null | inherits `video.hdr_lora` | [`_normalize_loras`](scripts/music_video.py#L887) | per-scene LEGACY LoRA override; `null` disables. Prefer per-scene `loras:` below. |
+| `loras` | list/null | inherits `video.loras` | [`_normalize_loras`](scripts/music_video.py#L887) | per-scene chained LoRA override. Same shape as `video.loras`. |
+| `lipsync_audio` | path/null | inherits `video.lipsync_audio` | [`cmd_scene`](scripts/music_video.py#L871) | per-scene ia2v audio override; `null` forces `song.mp3` |
+| `base_guide_strength` | float | inherits `video.base_guide_strength` | [`cmd_scene`](scripts/music_video.py#L871) | multiguide base-pass guide strength override |
+| `refine_guide_strength` | float | inherits `video.refine_guide_strength` | [`cmd_scene`](scripts/music_video.py#L871) | multiguide refine-pass guide strength override |
+| `transition_from_prev` | dict | none | [`cmd_transitions`](scripts/music_video.py#L1149) | override the LTX morph clip on the INCOMING boundary (see below) |
+
+#### `scenes[].anchor.*`
+
+When `anchor.prompt` is set, [`_generate_anchor`](scripts/music_video.py#L604) flux2-pre-renders a PNG per scene and uses it as that scene's first frame, overriding `image`.
+
+| key | type | default | code | meaning |
+|---|---|---|---|---|
+| `type` | `t2i` \| `i2i` \| `i2i2` \| `i2iN` \| `angles` | inferred from `len(references)` | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 mode |
+| `prompt` | str | required | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 prompt; `{subjects}` tokens expand |
+| `reference` | path | none | [`_generate_anchor`](scripts/music_video.py#L604) | single reference image (for `i2i`) |
+| `references` | list[path] | none | [`_generate_anchor`](scripts/music_video.py#L604) | 2+ references (for `i2i2`, `i2iN`, `angles`); first is the primary |
+| `width` | int | from `video.resolution[0]` | [`_generate_anchor`](scripts/music_video.py#L604) | anchor render width override |
+| `height` | int | from `video.resolution[1]` | [`_generate_anchor`](scripts/music_video.py#L604) | anchor render height override |
+| `steps` | int | flux2 default (~8) | [`_generate_anchor`](scripts/music_video.py#L604) | flux2 sampler steps |
+| `keep_identity` | bool | `true` | [`_generate_anchor`](scripts/music_video.py#L604) | for `i2i`/`i2i2`: auto-append "keep face/features from reference" guard. Set `false` to suppress |
+| `angle_prompts` | list[str] | `[prompt]` | [`_generate_anchor`](scripts/music_video.py#L604) | for `type: angles` — multi-pose batch from one reference |
+
+**Anchor-type cheatsheet** (full discussion in the [`storyboard`](../storyboard/SKILL.md) skill):
+
+| type | refs | use when |
+|---|---|---|
+| `t2i` | 0 | pure environment / no character (setting shots) |
+| `i2i` | 1 | character into a specific scene (most common) |
+| `i2i2` | 2 | character + setting blend, or character A + character B meet |
+| `i2iN` | 3+ | small group scenes (cap at 3–4 — identity drifts past that) |
+| `angles` | 1 | character-sheet building (multi-pose batch from one reference) |
+
+#### `scenes[].guides[]` items (multi-guide)
+
+Resolved via `storyboard.lib.guides.resolve_guides`.
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `image` | str | required | `@anchor`, `@last`, or a path; relative paths resolve against project dir |
+| `at_sec` | float | — | absolute seconds from scene start (takes precedence) |
+| `at_relative` | float (0..1) | — | fraction of `duration_sec` |
+| `at_frame` | int | — | explicit LTX latent frame (snaps to multiples of 8) |
+| `strength` | float | `1.0` | `LTXVAddGuide` weight |
+| `label` | str | — | human-readable, ignored by resolver |
+
+#### `scenes[].transition_from_prev.*`
+
+Goes on the INCOMING scene (B-side), not scene A. Read by [`cmd_transitions`](scripts/music_video.py#L1149).
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `duration` | float | from `video.transitions.duration` | per-boundary length; `0` = hard cut (LTX morph skipped) |
+| `b_sparse` | str | from `video.transitions.default_b_sparse` | B-side latent positions for this boundary |
+| `prompt` | str | from `video.transitions.prompt` | morph prompt for this boundary only |
+| `ic_lora` | dict | none | IC-LoRA structural reference for the morph's empty middle. Single-ref only today (see "Multiguide stitching" below) |
+
+The `ic_lora` dict shape:
+
+```yaml
+transition_from_prev:
+  duration: 4.0
+  ic_lora:
+    file: ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
+    strength: 1.0                           # LoRA model strength
+    reference_video: cond/22-23-spin.mp4    # or reference: <png>
+    reference_strength: 1.0                 # AddGuide weight (0..1)
+    frame_idx: 24                           # where the cond starts in the latent
+```
+
+`reference_video` is auto-trimmed by `cmd_transitions` if it would
+overflow `(length_frames - frame_idx) / fps` — the assertion
+`latent_idx + guide_latent.shape[2] <= latent_length` in
+`LTXAddVideoICLoRAGuide.execute` is enforced upstream. A trimmed copy is
+written next to the transition mp4 as `…-ictrim.mp4`.
+
+### Ingredients mode (project-level character/prop/location consistency)
+
+When a music video must keep the **same** character, props and locations
+consistent across *every* scene, condition each scene on ONE project **reference
+sheet** (black-bg element panels) via the LTX-2.3 ingredients IC-LoRA, instead of
+authoring a per-scene flux2 anchor.
+
+1. Build the sheet once with the storyboard skill:
+
+   ```bash
+   storyboard/scripts/generate_reference_sheet.py --out sheet.png \
+     --character cast.png --character-desc "…" \
+     --prop "x=…" --location "…" \
+     --width 1024 --height 576        # = video.resolution (aspect MUST match)
+   ```
+
+2. Point the project at it and flag the scenes:
+
+   ```yaml
+   reference_sheet: sheet.png          # project-level (or per-scene override)
+   video: { resolution: [1024, 576], fps: 24 }
+   scenes:
+     - label: chorus-1
+       start_sec: 41.0
+       duration_sec: 5                  # ~121f @ 24fps is the trained bucket
+       prompt: "the singer on the neon rooftop, holding the mic, rain"
+       mode: ingredients                # render via the reference sheet
+   ```
+
+`mode: ingredients` is checked **first** in the scene dispatch (authoritative
+over `image`/`guides`). The render is **silent by design** — the song is muxed
+over the whole timeline at assemble time and `assemble.py` strips per-clip audio
+anyway, so no audio slice is conditioned. The scene's generic `video.negative` is
+dropped in favour of the ingredients LoRA's tuned negative (set a per-scene
+`negative:` to override). Tune with `ingredients_lora_strength` (def 1.4) /
+`ingredients_reference_strength` (def 1.0). Trained buckets are landscape
+(768×448, 960×544); portrait is off-bucket — evaluate. Compose freely with
+camera LoRAs and transitions. See the comfyui skill's `ingredients` command and
+storyboard's "Reference sheets" section.
+
 ### Camera LoRAs
 
 Seven cinematic motion LoRAs are installed on the comfy server and can be
@@ -354,6 +627,114 @@ immediately has to sing. Contiguous multi-frame B-blocks (e.g. 16 frames at
 positions 80-96) caused a mid-transition freeze at snap-in; always keep
 the B-side sparse (every 8 latent frames).
 
+**b_sparse positions that map to BEFORE scene B starts are dropped, not
+clamped.** A 4s transition between c2_breath (ends 130.02s) and tunnel_drop
+(starts 132.0s) puts the boundary centre at 130.02 → transition spans
+[128.02, 132.02]. Latent positions 72/80/88 then map to song times
+131.02 / 131.35 / 131.69 — all BEFORE scene B's start at 132.0 → negative
+`src_frame` in `next_video`. The old `max(0, x)` clamp silently locked
+all four anchors to scene B's frame 0, killing the morph's freedom in the
+empty middle (every output snapped to scene B's static head by latent 72).
+The current behaviour skips those positions with a stderr warning and
+proceeds with whatever anchors remain. For boundaries where scene B
+starts in the back half of the transition window, override `b_sparse: "96"`
+explicitly to keep just the tail anchor.
+
+### Multiguide stitching (the canonical seamless-transition pattern)
+
+When a morph should bridge two scenes with continuous structural motion
+through the empty middle (not just smooth-pixel-interpolate from A's tail to
+B's head), use the multiguide stitch: **A-side `LTXVAddGuide` at
+frame_idx=0 + IC-LoRA cond at frame_idx=24 + single B-side anchor at
+latent 96**. The IC-LoRA's structural reference video carries continuous
+geometry through the morph's empty middle, the morph LoRA blends the
+endpoints, and the single tail anchor lands scene B cleanly without
+yanking the latent.
+
+Recipe:
+
+1. **Render a time-aligned cond** for the transition's song-time window
+   via `midi2canny.py --polyfield-only` (or `tunnel_3d.py`, etc.). For a
+   boundary spanning song time `[T_a, T_b]`:
+   ```bash
+   midi2canny.py --polyfield-only \
+     --drums midi/drums_audio_aligned.mid \
+     --vocals midi/vocals_audio_aligned.mid \
+     --guitar midi/guitar_audio_aligned.mid \
+     --start-sec T_a --duration (T_b - T_a) \
+     --fps 24 --width <w> --height <h> \
+     --poly-count 24 --poly-rings 3 \
+     --output cond/N-N+1-trans.mp4
+   ```
+   Audio-aligned MIDIs are critical — the polyfield's drum-hit scale
+   pulses and vocal-pitch rotV impulses then line up with what the LoRA
+   will be conditioning the audio against. A cond rendered for the wrong
+   song-time window produces an output that "looks the same every render"
+   because the cond's temporal arc doesn't reinforce the audio's arc.
+
+2. **Wire the cond** into the per-boundary `transition_from_prev.ic_lora`
+   block on scene B with `frame_idx: 24` (= 1.0s @ 24fps = the empty
+   middle's start). The non-zero `frame_idx` is critical: a guide at
+   `frame_idx=0` collides with the A-side `LTXVAddGuide`'s keyframe
+   time-start, which makes `comfy_extras.nodes_lt.LTXVCropGuides`
+   undercount `num_keyframes` (it uses `torch.unique(time_starts)`) and
+   pass-2 refines the un-stripped guide frames as content — 5-9s glitched
+   output instead of clean 4s. `frame_idx: 24` puts the cond past the
+   A-side block.
+
+3. **Override `b_sparse: "96"`** if scene B starts in the back half of
+   the transition window (see warning above). Single tail anchor only —
+   gives the morph LoRA the full empty middle to follow the cond.
+
+4. **Match scene B's IC-LoRA cond to its own song-time window.** Scene 23
+   spans 132-139s, so its `hdr_lora.reference_video` should be a cond
+   rendered with `--start-sec 132 --duration 7`, NOT the transition's
+   cond (which covers 128-132s). The output looks the same every render
+   if the cond's temporal arc doesn't match the audio's arc.
+
+5. **If scene B's intro is static, scene B has to be rerendered with an
+   action prompt.** The morph LoRA interpolates A → B; if B's first
+   frames are a held shot, the morph lands on a held shot. Rewriting
+   scene B's prompt to "action from frame one" + bumping its IC-LoRA
+   reference_strength is what unlocks "polygons whipping past the face"
+   instead of "face holding still until the drum hit at +2.8s".
+
+Worked example for the stable-altitude v9 c2_breath → tunnel_drop boundary:
+
+```yaml
+- label: tunnel_drop
+  start_sec: 132.0
+  duration_sec: 7.0
+  transition_from_prev:
+    duration: 4.0
+    b_sparse: "96"                          # single tail anchor — see warning above
+    ic_lora:
+      file: ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
+      strength: 1.0
+      reference_video: cond/22-23-spin.mp4   # midi2canny --polyfield-only for 128-132s window
+      reference_strength: 1.0
+      frame_idx: 24                          # past A-side AddGuide block
+  hdr_lora:
+    file: ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
+    strength: 1.0
+    reference_video: cond/23-tunnel_drop-v2.mp4   # midi2canny for 132-139s — TIME-ALIGNED to scene
+    reference_strength: 1.0
+  prompt: >
+    {operator}'s face flickering at the center of an EXPLODING geometric
+    mandala of neon-cyan + sodium-orange polygons that spin and shatter
+    outward from frame one, polygons whipping past the face, … continuous
+    violent motion through the drum slam at 2.8s into the explosion peak.
+```
+
+**Multi-reference IC-LoRA** (multiple `LTXAddVideoICLoRAGuide` nodes chained
+under different cond videos) is NOT supported today. Upstream
+`comfy_extras.nodes_lt.LTXVCropGuides.get_keyframe_idxs` counts
+`num_keyframes = unique(keyframe_idxs[:, 0, :, 0])` — when 2+ guides share
+any pixel-frame time-start, the unique-count undercounts and pass-2
+refines the extras as content. Workaround: only one IC-LoRA per
+transition. The `transition_from_prev.loras` (list) schema is reserved
+but rejected at yaml-load if used.
+
 ### Multi-guide scenes (`guides:` field)
 
 A scene whose first frame can't/shouldn't show the character — e.g. opens
@@ -414,17 +795,18 @@ A fuller reference with all optional fields is at `references/example.yaml`. For
 
 1. **Style brief** is a producer-style text-to-music prompt. See `~/.openclaw/skills/suno-mcp/references/style-guide.md` for the full pattern (genre, BPM, instruments, production, vocal, mood, narrative sentence). Avoid keyword lists.
 2. **Lyrics** use `[Verse]/[Chorus]/[Bridge]/[Instrumental]` tags. One line per phrase; no mid-line punctuation. See `~/.openclaw/skills/suno-mcp/references/lyrics-guide.md`.
-3. **Scenes** should map to lyric structure. Typical layout for a 2-minute song at ~90 BPM:
-   - verse A → 1 scene, 15-20s
-   - chorus 1 → 1 scene, 10-15s
-   - verse B → 1 scene
-   - chorus 2 → 1 scene
-   - bridge/outro → 1 scene
-   Align `start_sec`/`duration_sec` with the actual song structure. Duration accuracy matters for audio-reactive feel.
+3. **Scenes** should map to lyric structure. For a ~3-minute song, prefer **shorter, more numerous scenes** (~6-8s each, 20-30 total) over a small number of long ones. Long scenes (15s+) are at LTX's edge and benefit less from re-rolls. Short scenes give you variety per chorus and let you place dancer close-ups / cutaway beats between operator-lipsync passes. Align `start_sec`/`duration_sec` with the actual song structure — duration accuracy matters for audio-reactive feel.
 4. **Scene prompts** should describe what's on screen — not tell a story. LTX-2.3 handles short camera moves well (dolly, pan, push-in) and struggles with cuts. Keep each scene as a continuous shot.
 5. **Image chain** with `@last` for continuity between adjacent scenes; use `@anchor` or a literal path to reset to a different look (verse/chorus transitions).
-6. **Resolution**: 1024×576 is a good default for music videos. 768×512 is faster. Higher eats GPU.
+6. **Resolution**: 1024×576 is a good default for music videos. 768×512 is faster. Higher eats GPU. (LTX's 2× upscaler then doubles to the final output — see `video.anchor_scale`.)
 7. **Negative prompt**: use the `video.negative` field to blacklist "ugly, pc game, cartoon, text" etc. Keeps LTX-2.3 from drifting.
+8. **Cold-open / first appearance**. Don't put the protagonist in scene 1 by default. A short atmospheric `t2i` / `i2i` (curtain, empty stage, exterior establishing) for the instrumental intro, then cut to the protagonist's first appearance **exactly when a defining instrument enters** (typically the drums — use `analyze_midi.py` to find the first drum hit). The cut feels earned because the protagonist's entrance lands with the beat that just kicked in. The cold-open boundary is almost never the first vocal — it's the first drum hit, which is usually 1-3s earlier.
+9. **Variety beats inside each chorus**. A chorus rendered as ONE 15s scene of the protagonist lipsyncing reads as static. Split it into 3 shorter (4-7s) scenes: wide-stage establishing, close-up of a *different* character (a dancer mouthing the answer hook), push-in on the protagonist's face. Same lyric, three different camera languages. This is the single biggest "professional music video" lever short of using transitions.
+10. **Featured-character cameos (call-and-response, duets, eye-contact moments)**. When the lyric is about *engagement* — call-and-response, "I wanna hear you say", a partner's answer — having the operator literally turn and meet eyes with another person *makes the song's emotional argument visible*. Two patterns:
+    - **`i2i2` against `[operator, group_setting]`** picks the partner from the recurring cast (a chorus dancer). LTX renders an interchangeable face — fine for chorus formations, bad for "the singular partner" moment.
+    - **`i2iN` against `[operator, setting, featured_singer.png]`** uses a dedicated reference image for the duet partner so they're visually distinct from the recurring cast. Make `featured_singer.png` a t2i upfront with explicit "different from any of the dancers" language (different hair, different outfit, different posture). Reuse this ref across every eye-contact / duet scene to keep her identity consistent.
+11. **Hand anatomy guidance for crowd shots**. flux2 will hallucinate extra hands the moment multiple people are mid-gesture in the same frame ("operator with mic raised + dancers with arms up" → often produces a third hand on the operator). Write the anchor prompt with **explicit positional language per character** (e.g. "operator's right hand thrusting the chrome mic forward, his left hand at his side; dancers behind with both arms straight up overhead in symmetric V") and add `anatomically correct hands` to the prompt tail. Same fix for "operator + featured singer sharing a mic" — say which hand holds the mic.
+12. **Avoid long sustains at scene cuts**. Scenes that end mid-sustain (held "ever", held "do", held "say") cut LTX's lipsync mid-phoneme. Move the boundary to **after** the sustain ends — check `_words.srt` for the exact word-end time, not the segment-end time. This is the single most common source of "the lipsync looks weird at the cut" reports.
 
 ## Troubleshooting
 
@@ -437,6 +819,14 @@ A fuller reference with all optional fields is at `references/example.yaml`. For
 **Suno login required** → `mcporter call suno.suno_login --config ~/.openclaw/config/mcporter.json` first.
 
 **Scenes visually inconsistent** → pin `@anchor` on the first scene and chain `@last` through the rest. Add specific character/place descriptors in every scene prompt, not just the first.
+
+**`UnicodeEncodeError` on Windows** → the script prints unicode glyphs (→ ✓ ⚠) and writes them to `run.log`. As of the latest version, `music_video.py` reconfigures stdout/stderr/log file to utf-8 at startup, so this should "just work" on PowerShell / cmd.exe. If you're on an older copy and still see `'charmap' codec can't encode character '→'`, prefix the invocation with `PYTHONIOENCODING=utf-8` or upgrade the skill.
+
+**Lipsync feels off / words cut at scene boundaries** → your `start_sec`/`duration_sec` are landing inside word spans rather than at word ends. Don't trust segment SRT timings for this — vocalists sustain final phonemes past line-end. Open `<prefix>_words.srt`, find what word is being sung at each scene's `end_sec`, and shift the boundary to **after** that word's end. Re-render only the affected scene + the one starting at the new boundary; everything else is preserved by the restart-safe scene cache. See "Avoid long sustains at scene cuts" in the prompting recipe.
+
+**Cuts feel "off the beat"** → your boundaries are not bar-aligned. Run `analyze_midi.py <project>` to get the bar grid (e.g. 123.4 BPM → 1.944s/bar), then nudge each `end_sec` to the nearest bar boundary that also respects a word-end (the two usually coincide within ~150ms for well-recorded vocals).
+
+**`mido.KeySignatureError: Could not decode key with 16 sharps`** → Suno's stem-pack midi exports occasionally emit key signature meta events outside the standard MIDI spec. The current `analyze_midi.py` / `analyze_song.py` pre-populate mido's decode table with safe fallbacks so the file loads — if you're on an older copy, monkey-patch `mido.midifiles.meta._key_signature_decode` to add fallback entries before the first `MidiFile()` call.
 
 ## Advanced (not in v1)
 

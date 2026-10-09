@@ -77,6 +77,17 @@ from __future__ import annotations
 import argparse, json, os, shutil, subprocess, sys, time
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so the script can print the unicode glyphs
+# it uses for status (→ ✓ ⚠ — …) on Windows consoles whose default code
+# page is cp1252. Without this, any unicode print() crashes with
+# UnicodeEncodeError. Safe no-op on POSIX where stdout is already utf-8.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # Lazy imports for pyyaml + imageio_ffmpeg. These are heavy deps that
 # only some subcommands need — `init` just writes a text skeleton and
 # should work on any minimal sandbox with stock python3 (no uv, no
@@ -118,7 +129,7 @@ def _log(project: Path, msg: str) -> None:
     ts = time.strftime("%H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line, flush=True)
-    with open(project / "run.log", "a") as f:
+    with open(project / "run.log", "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 
@@ -139,7 +150,7 @@ def _run(cmd: list[str], cwd: Path | None = None, log_path: Path | None = None,
         for line in p.stdout:
             print(line, end="")
             if log_path:
-                with open(log_path, "a") as f:
+                with open(log_path, "a", encoding="utf-8") as f:
                     f.write(line)
         p.wait()
         return p.returncode
@@ -163,7 +174,10 @@ def _load_spec(yaml_path: str) -> tuple[dict, Path]:
     p = Path(yaml_path).resolve()
     if not p.exists():
         sys.exit(f"spec not found: {p}")
-    spec = _require_yaml().safe_load(p.read_text())
+    # Force utf-8 — Path.read_text() picks the OS default (cp1252 on
+    # Windows), which mangles em-dashes and other non-ASCII glyphs that
+    # legitimately appear in style/lyrics/scene prompts.
+    spec = _require_yaml().safe_load(p.read_text(encoding="utf-8"))
     _fill_scene_start_sec(spec)
     return spec, p.parent  # project dir = dir containing the yaml
 
@@ -275,7 +289,7 @@ def cmd_init(slug: str, theme: str | None, force: bool) -> None:
         theme_style_hint=theme_style_hint,
         theme_lyrics_hint=theme_lyrics_hint,
     )
-    yaml_path.write_text(content)
+    yaml_path.write_text(content, encoding="utf-8")
 
     print(f"created {project}/")
     print(f"  song.yaml (skeleton)")
@@ -608,11 +622,16 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
         return str(anchor_path)
 
     vs = _video_spec(spec)
-    # Anchor at the video's target resolution — LTX downsizes anyway via
-    # ResizeImagesByLongerEdge(1536) + ResizeImageMaskNode. Higher anchor res
-    # just wastes flux2 time. Override per-scene via anchor.width/height.
-    w = int(anchor_cfg.get("width",  vs["width"]))
-    h = int(anchor_cfg.get("height", vs["height"]))
+    # Anchor resolution defaults to `video.resolution × video.anchor_scale`.
+    # Default scale is 2.0 to match LTX-2.3's 2-pass spatial upscaler
+    # (LTXVLatentUpsampler 2×): the final rendered video is 2× the LTX
+    # working resolution, so rendering anchors at 2× video means flux2 puts
+    # real detail at the output resolution rather than at the LTX working
+    # resolution. Set `video.anchor_scale: 1.0` to opt out (legacy behavior),
+    # or override per-scene via `anchor.width` / `anchor.height`.
+    anchor_scale = float(vs.get("anchor_scale", 2.0))
+    w = int(anchor_cfg.get("width",  int(vs["width"]  * anchor_scale)))
+    h = int(anchor_cfg.get("height", int(vs["height"] * anchor_scale)))
 
     # Support t2i / i2i / i2i2 / angles. Either `reference` (single path) or
     # `references` (list) — type is inferred from the count, or set explicitly.
@@ -660,6 +679,19 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
     if "steps" in anchor_cfg:
         common += ["--steps", str(int(anchor_cfg["steps"]))]
 
+    # Friendly ref-count validation BEFORE indexing ref_paths blindly —
+    # otherwise an explicit `type: i2i2` with one (or zero) references
+    # fails with an opaque IndexError instead of a hint.
+    _min_refs = {"i2i": 1, "i2i2": 2, "i2iN": 1, "angles": 1}.get(anchor_type)
+    if _min_refs is not None and len(ref_paths) < _min_refs:
+        sys.exit(f"scene {idx}: anchor.type '{anchor_type}' needs at least "
+                 f"{_min_refs} reference image(s), got {len(ref_paths)}. "
+                 f"Set `reference:` (one path) or `references: [a.png, b.png]` "
+                 f"in the scene's anchor block.")
+    if anchor_type == "i2i2" and len(ref_paths) > 2:
+        sys.exit(f"scene {idx}: anchor.type 'i2i2' takes exactly 2 references, "
+                 f"got {len(ref_paths)}. Use `type: i2iN` for 3+.")
+
     if anchor_type == "t2i":
         cmd = ["python3", str(COMFY), "t2i"] + common
     elif anchor_type == "i2i":
@@ -670,8 +702,6 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
                "--image2", str(ref_paths[1])] + common
     elif anchor_type == "i2iN":
         # 3+ references: comfy_graph.py i2iN takes a comma-separated list.
-        if not ref_paths:
-            sys.exit(f"scene {idx}: i2iN anchor needs at least one reference")
         images_csv = ",".join(str(p) for p in ref_paths)
         cmd = ["python3", str(COMFY), "i2iN", "--images", images_csv] + common
     elif anchor_type == "angles":
@@ -682,7 +712,7 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
                "--prompts", "\n".join(angle_prompts)] + common
     else:
         sys.exit(f"scene {idx}: unknown anchor.type '{anchor_type}' "
-                 "(expected t2i|i2i|i2i2|angles)")
+                 "(expected t2i|i2i|i2i2|i2iN|angles)")
 
     _log(project, f"scene {idx}: generating anchor via flux2 "
                   f"({anchor_type}{' refs='+','.join(refs) if refs else ''})")
@@ -737,8 +767,12 @@ def cmd_anchors(spec: dict, project: Path) -> None:
                 prompt = (f"{title}. {style}" if title or style else
                           "a cinematic music-video key frame, atmospheric lighting")
             vs = _video_spec(spec)
-            w = int(vs["width"])
-            h = int(vs["height"])
+            # Match `_generate_anchor`: render at video.resolution × anchor_scale
+            # so the top-level anchor has detail at the final upscaled video
+            # resolution (LTX's 2× spatial upscaler doubles output).
+            anchor_scale = float(vs.get("anchor_scale", 2.0))
+            w = int(vs["width"]  * anchor_scale)
+            h = int(vs["height"] * anchor_scale)
             prefix = anchor_path.stem   # e.g. "anchor"
             cmd = ["python3", str(COMFY), "t2i",
                    "--prompt", prompt,
@@ -839,11 +873,82 @@ def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str 
 
 
 def _extract_last_frame(scene_mp4: Path, out_png: Path) -> None:
-    rc = subprocess.run([str(VIDEO_JOIN), "last-frame",
+    # video_join.py is a `uv run --script` script with inline deps. Executing
+    # the .py path directly works via shebang on POSIX but Windows rejects it
+    # with "WinError 193: not a valid Win32 application". Invoke via `uv run
+    # --script` everywhere so the same call works on both platforms.
+    rc = subprocess.run(["uv", "run", "--script", str(VIDEO_JOIN), "last-frame",
                          "--input", str(scene_mp4), "--output", str(out_png)],
                         capture_output=True).returncode
     if rc != 0:
         sys.exit(f"failed to extract last frame of {scene_mp4}")
+
+
+def _normalize_loras(scene: dict, vs: dict) -> list[dict]:
+    """Normalize per-scene LoRA spec to a unified list of dicts.
+
+    Two input shapes are supported:
+
+    1. NEW (preferred):
+         scene.loras: [{file, kind, strength, reference_video?, reference?,
+                        reference_strength?}, ...]
+       — chainable list. Today only `kind: ic_lora` is wired through; any
+       other kind raises sys.exit (deferred until comfy_graph grows
+       LoraLoaderModelOnly chaining flags).
+
+    2. OLD (back-compat with every v8/v9 yaml in /workspace/handoffs/):
+         scene.hdr_lora: {file, strength, reference|reference_video,
+                          reference_strength, scene_emb?, scene_emb_strength?}
+         video.hdr_lora: same shape (project-wide default).
+       Converted to the new shape in-memory: file → ic_lora entry, and
+       scene_emb (if set) → second ic_lora entry.
+
+    Scene-level `loras:` and `hdr_lora:` both win over the video-level
+    default. Scene-level `hdr_lora: null` (explicit) disables the default;
+    scene-level `loras: []` is treated as "no LoRAs".
+
+    Returns the normalized list (possibly empty). Does NOT touch the CLI
+    surface — caller walks the list to assemble --ic_loras et al.
+    """
+    # Scene-level loras: short-circuits everything else.
+    if "loras" in scene:
+        scene_loras_raw = scene.get("loras") or []
+        out: list[dict] = []
+        for entry in scene_loras_raw:
+            kind = entry.get("kind")
+            if kind != "ic_lora":
+                sys.exit(
+                    f"scene loras[*].kind={kind!r} not yet supported — "
+                    f"only `ic_lora` is wired through comfy_graph today. "
+                    f"Standard LoRA chaining (LoraLoaderModelOnly) needs "
+                    f"a new --extra-lora CLI flag on comfy_graph.py."
+                )
+            out.append(dict(entry))
+        return out
+
+    # Old hdr_lora shape (scene override or video default). An explicit
+    # `scene.hdr_lora: null` disables the video-level default.
+    if "hdr_lora" in scene:
+        h = scene.get("hdr_lora")
+    else:
+        h = vs.get("hdr_lora")
+    if not h:
+        return []
+    scene_loras = [{
+        "file": h["file"],
+        "kind": "ic_lora",
+        "strength": h.get("strength", 1.0),
+        "reference_video": h.get("reference_video"),
+        "reference_image": h.get("reference"),
+        "reference_strength": h.get("reference_strength", 1.0),
+    }]
+    if h.get("scene_emb"):
+        scene_loras.append({
+            "file": h["scene_emb"],
+            "kind": "ic_lora",
+            "strength": h.get("scene_emb_strength", 0.8),
+        })
+    return scene_loras
 
 
 def cmd_scene(spec: dict, project: Path, idx: int) -> None:
@@ -895,7 +1000,13 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     # don't need audio lookhead — render at duration_sec exactly.
     is_lipsync = bool(scene.get("anchor"))
     tail_buffer = float(vs.get("tail_buffer_sec", 0.0))
-    effective_duration = float(scene["duration_sec"]) + (tail_buffer if is_lipsync else 0.0)
+    # tail_buffer always applied — LTX's ×8 latent temporal compression
+    # frequently rounds frame counts DOWN, so without a buffer the rendered
+    # mp4 lands short of duration_sec (e.g. 4.21s → 4.04s). Padding here +
+    # trimming in storyboard/assemble.py keeps audio in lockstep with video.
+    # The lipsync flag historically gated this for vocal-margin reasons but
+    # the trim step already drops the tail, so all scenes can share it.
+    effective_duration = float(scene["duration_sec"]) + tail_buffer
 
     # Audio source resolution for ia2v conditioning. Priority:
     #   1. scene.lipsync_audio (per-scene override; pass null/None to force
@@ -952,46 +1063,64 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     if scene.get("fast") or (spec.get("video") or {}).get("fast"):
         common += ["--fast"]
 
-    # Optional HDR (or other) IC-LoRA stack — sourced from video.hdr_lora
-    # (project-wide) or scene.hdr_lora (per-scene override). Either is a dict:
-    #   {file: <safetensors>, strength: 1.0, reference: <png path>,
-    #    reference_strength: 1.0, scene_emb: <safetensors> (optional),
-    #    scene_emb_strength: 1.0}
-    # or null/missing to disable. The reference image is mandatory when an
-    # IC-LoRA is set — the LoRA weights only act in concert with the
-    # ImagePrepForICLora + LTXAddVideoICLoRAGuide chain that consumes the
-    # reference. Without it the LoRA stacks have no visible effect.
-    hdr_cfg = scene.get("hdr_lora") if "hdr_lora" in scene else vs.get("hdr_lora")
-    if hdr_cfg:
-        ic_pairs: list[str] = []
-        ic_pairs.append(f"{hdr_cfg['file']}:{float(hdr_cfg.get('strength', 1.0)):.2f}")
-        if hdr_cfg.get("scene_emb"):
-            ic_pairs.append(
-                f"{hdr_cfg['scene_emb']}:{float(hdr_cfg.get('scene_emb_strength', 1.0)):.2f}")
-        ref = hdr_cfg.get("reference")
-        ref_video = hdr_cfg.get("reference_video")
-        # Static-image reference (HDR-style frame-0 bias): use --ic_lora_reference.
+    # IC-LoRA stack — unified via _normalize_loras which accepts both the
+    # new `scene.loras: [...]` shape and the legacy `scene.hdr_lora:` /
+    # `video.hdr_lora:` shape. The list may contain multiple ic_lora
+    # entries (e.g. union-control + HDR + future scene-emb), all stacked
+    # through the same --ic_loras pair list. Reference video/image is
+    # taken from the FIRST entry that declares one; only one reference
+    # per scene is supported today (the LTXAddVideoICLoRAGuide chain in
+    # ltx2.py emits a single guide using the last loader's
+    # latent_downscale_factor — see open question in the design doc).
+    scene_loras = _normalize_loras(scene, vs)
+    if scene_loras:
+        ic_pairs: list[str] = [
+            f"{e['file']}:{float(e.get('strength', 1.0)):.2f}" for e in scene_loras
+        ]
+        # First entry that declares a reference wins; any subsequent
+        # entry trying to declare its own reference is an error today.
+        ref_entry: dict | None = None
+        for e in scene_loras:
+            if e.get("reference_video") or e.get("reference_image"):
+                if ref_entry is None:
+                    ref_entry = e
+                else:
+                    sys.exit(
+                        "multi-reference IC-LoRA chains not yet supported — "
+                        "needs ltx2.py guide-per-loader patch. Today "
+                        "LTXAddVideoICLoRAGuide is emitted once per scene "
+                        "using the last loader's latent_downscale_factor; "
+                        f"second reference declared on {e.get('file')!r} "
+                        "cannot be honoured."
+                    )
+        if ref_entry is None:
+            sys.exit(
+                "scene IC-LoRA stack needs `reference` (image) OR "
+                "`reference_video` (mp4) on at least one entry — the LoRA "
+                "weights only act in concert with the LTXAddVideoICLoRAGuide "
+                "chain that consumes the reference."
+            )
+        ref_video = ref_entry.get("reference_video")
+        ref = ref_entry.get("reference_image")
+        # Static-image reference (HDR-style frame-0 bias): --ic_lora_reference.
         # Video reference (depth/canny/motion-track per-frame conditioning):
-        # use --ic_lora_reference_video. Pass either one. The video form
-        # bypasses ImagePrepForICLora server-side and uses ResizeImageMaskNode
-        # 'scale to multiple' instead — that's what the official Lightricks
-        # workflow does and it's what gives full-frame coverage on portrait
-        # outputs (vs the ImagePrepForICLora left-bias bug we hit on the
-        # square-prep path).
-        if not ref and not ref_video:
-            sys.exit("video.hdr_lora needs `reference` (image) OR `reference_video` (mp4)")
+        # --ic_lora_reference_video. The video form bypasses
+        # ImagePrepForICLora server-side and uses ResizeImageMaskNode
+        # 'scale to multiple' — what the official Lightricks workflow does
+        # and what gives full-frame coverage on portrait outputs (vs the
+        # ImagePrepForICLora left-bias bug on the square-prep path).
         common += ["--ic_loras", ",".join(ic_pairs),
                    "--ic_lora_reference_strength",
-                   str(float(hdr_cfg.get("reference_strength", 1.0)))]
+                   str(float(ref_entry.get("reference_strength", 1.0)))]
         if ref_video:
             rv_path = (project / ref_video).resolve() if not Path(ref_video).is_absolute() else Path(ref_video)
             if not rv_path.exists():
-                sys.exit(f"video.hdr_lora.reference_video points at {rv_path} which does not exist")
+                sys.exit(f"scene IC-LoRA reference_video points at {rv_path} which does not exist")
             common += ["--ic_lora_reference_video", str(rv_path)]
         else:
             ref_path = (project / ref).resolve() if not Path(ref).is_absolute() else Path(ref)
             if not ref_path.exists():
-                sys.exit(f"video.hdr_lora.reference points at {ref_path} which does not exist")
+                sys.exit(f"scene IC-LoRA reference points at {ref_path} which does not exist")
             common += ["--ic_lora_reference", str(ref_path)]
 
     # guides: optional yaml list of additional keyframe guides at specified
@@ -1003,7 +1132,45 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
     # character anchor mid-shot.
     guides_yaml = scene.get("guides")
 
-    if image_path is None and not guides_yaml:
+    # `mode: ingredients` → LTX-2.3 reference-sheet IC-LoRA. ONE project sheet
+    # (project-level `reference_sheet:`, or a per-scene override) keeps recurring
+    # characters / props / locations consistent across every scene. Checked
+    # FIRST so the mode is authoritative regardless of image_path / guides.
+    # Silent by design: ingredients renders carry no useful audio and the song
+    # is muxed over the whole timeline at assemble time, so no slice is passed
+    # (and assemble.py strips per-clip audio anyway).
+    scene_mode = scene.get("mode") or vs.get("mode")
+    if scene_mode == "ingredients":
+        sheet = scene.get("reference_sheet") or spec.get("reference_sheet")
+        if not sheet:
+            sys.exit(f"scene {idx}: mode=ingredients needs `reference_sheet:` "
+                     f"(set it project-level or on the scene)")
+        sheet_path = (Path(sheet) if Path(sheet).is_absolute()
+                      else (project / sheet)).resolve()
+        if not sheet_path.exists():
+            sys.exit(f"scene {idx}: reference_sheet {sheet_path} does not exist")
+        # Default to the ingredients LoRA's tuned negative — drop the project's
+        # generic video.negative from `common` unless the scene sets its own.
+        ing_common, _skip = [], False
+        for tok in common:
+            if _skip:
+                _skip = False; continue
+            if tok == "--negative":
+                _skip = True; continue
+            ing_common.append(tok)
+        ing_extras: list[str] = []
+        if scene.get("negative"):
+            ing_extras += ["--negative", str(scene["negative"])]
+        ls = scene.get("ingredients_lora_strength", vs.get("ingredients_lora_strength"))
+        if ls is not None:
+            ing_extras += ["--lora_strength", str(float(ls))]
+        rs = scene.get("ingredients_reference_strength",
+                       vs.get("ingredients_reference_strength"))
+        if rs is not None:
+            ing_extras += ["--reference_strength", str(float(rs))]
+        cmd = ["python3", str(COMFY), "ingredients",
+               "--sheet", str(sheet_path)] + ing_extras + ing_common
+    elif image_path is None and not guides_yaml:
         # First scene with no anchor → fall back to t2v (no audio slice).
         cmd = ["python3", str(COMFY), "t2v"] + common
     elif guides_yaml:
@@ -1206,6 +1373,19 @@ def cmd_transitions(spec: dict, project: Path) -> None:
         #            Default "96" (= 1f, single B-anchor at the tail).
         #            Use "72,80,88,96" (= 4f) on boundaries INTO lipsync/
         #            singing scenes for smoother character establishment.
+        #   ic_lora: optional dict — feed a structural reference video to
+        #            the morph's empty middle so the LoRA has something to
+        #            anchor on. Shape:
+        #              ic_lora:
+        #                file: <ltx-ic-lora-filename>
+        #                strength: 1.0
+        #                reference_video: cond/<n>-<label>.mp4 (or .png)
+        #                reference_strength: 0.7
+        #                frame_idx: 24    # default — empty-middle start
+        #            Single-ref only today. Multi-ref (list form) is blocked
+        #            by an upstream LTXVCropGuides bug; see
+        #            /workspace/runbooks/music-video-v9-lessons-2026-05-16.md
+        #            for the 2026-05-17 session findings.
         bttp = (b.get("transition_from_prev") or {})
         prompt = bttp.get("prompt", default_prompt)
         b_sparse = bttp.get("b_sparse") or tv.get("default_b_sparse", "96")
@@ -1213,6 +1393,13 @@ def cmd_transitions(spec: dict, project: Path) -> None:
             b_sparse_str = ",".join(str(int(x)) for x in b_sparse)
         else:
             b_sparse_str = str(b_sparse)
+        ic_lora_block = bttp.get("ic_lora")
+        if "loras" in bttp:
+            sys.exit(
+                f"transition {a_idx}→{b_idx}: `transition_from_prev.loras` (list) "
+                f"is blocked — multi-reference IC-LoRA chains hit an upstream "
+                f"LTXVCropGuides undercount when guides share frame_idx. Use the "
+                f"singular `transition_from_prev.ic_lora` dict instead.")
 
         # Guide-block frame counts must be multiples of 8 per LTX's latent
         # temporal quantization. 1s @ 24fps = 24 frames → ok.
@@ -1254,8 +1441,13 @@ def cmd_transitions(spec: dict, project: Path) -> None:
                "--prev_video_song_start_sec", f"{float(a['start_sec']):.3f}",
                "--next_video_song_start_sec", f"{float(b['start_sec']):.3f}",
                "--prev_video_buffer", f"{tail_buffer:.3f}",
-               "--mask_start_sec", "1.0",
-               "--mask_end_sec", "4.0",
+               # Mask boundaries scale with transition duration. Previously
+               # hardcoded for 4s transitions ([1.0, 4.0]) — broke shorter
+               # boundaries (mask_end > duration is undefined). Now: regen
+               # window starts after A-guide (guide_sec) and ends at the
+               # transition's tail. B-side anchors land inside this region.
+               "--mask_start_sec", f"{guide_sec:.3f}",
+               "--mask_end_sec", f"{dur:.3f}",
                "--timeout", "1800"]
         # Inherit fast/slow mode from the same knob the scene renders use.
         # Without this transitions silently render full 2-pass (LTXVLatentUpsampler
@@ -1270,9 +1462,73 @@ def cmd_transitions(spec: dict, project: Path) -> None:
             trans_fast = bool(vs.get("fast"))
         if trans_fast:
             cmd += ["--fast"]
+        # IC-LoRA on transition: structural cond runs through the morph's
+        # empty middle. frame_idx defaults to guide_sec (1.0s @ default_fps
+        # = 24 frames) so it starts right after the A-guide block, dodging
+        # the frame_idx=0 collision that triggers the LTXVCropGuides
+        # undercount on 2-pass refine. If the reference video would
+        # overflow the remaining latent (frame_idx + ref_frames > length),
+        # we pre-trim to a sibling .ictrim.mp4 in the project.
+        ic_lora_extras = []
+        if ic_lora_block:
+            ic_file = ic_lora_block.get("file")
+            ic_strength = float(ic_lora_block.get("strength", 1.0))
+            ic_ref = ic_lora_block.get("reference_video") or ic_lora_block.get("reference")
+            ic_ref_strength = float(ic_lora_block.get("reference_strength", 1.0))
+            ic_frame_idx = int(ic_lora_block.get("frame_idx", guide_frames))
+            if not (ic_file and ic_ref):
+                sys.exit(f"transition {a_idx}→{b_idx}: ic_lora needs both "
+                         f"`file` and `reference_video|reference`")
+            ic_ref_path = (project / ic_ref) if not Path(ic_ref).is_absolute() else Path(ic_ref)
+            if not ic_ref_path.exists():
+                sys.exit(f"transition {a_idx}→{b_idx}: ic_lora reference "
+                         f"{ic_ref_path} does not exist")
+            # Pre-trim video reference if it would overflow the transition latent.
+            # Latent length = ceil(dur*fps / 8) * 8 frames; cond must fit
+            # [ic_frame_idx, ic_frame_idx + cond_frames) within it.
+            is_video = ic_ref_path.suffix.lower() in (".mp4", ".mov", ".webm", ".mkv")
+            if is_video:
+                length_frames = max(8, (int(dur * default_fps) // 8) * 8)
+                if length_frames < int(dur * default_fps):
+                    length_frames += 8
+                max_cond_frames = length_frames - ic_frame_idx
+                max_cond_sec = max_cond_frames / float(default_fps)
+                cond_dur = _probe_duration(ic_ref_path)
+                if cond_dur > max_cond_sec + 0.01 and max_cond_sec > 0.5:
+                    trimmed = tdir / f"{a_stem}__{b_stem}-ictrim.mp4"
+                    if not trimmed.exists():
+                        subprocess.run([ffmpeg, "-y", "-loglevel", "error",
+                                        "-i", str(ic_ref_path),
+                                        "-t", f"{max_cond_sec:.3f}",
+                                        "-c", "copy", str(trimmed)],
+                                       capture_output=True)
+                        if not trimmed.exists() or trimmed.stat().st_size < 1024:
+                            # -c copy can fail on tight cuts; re-encode
+                            subprocess.run([ffmpeg, "-y", "-loglevel", "error",
+                                            "-i", str(ic_ref_path),
+                                            "-t", f"{max_cond_sec:.3f}",
+                                            "-an",
+                                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                            "-r", str(default_fps),
+                                            str(trimmed)],
+                                           capture_output=True)
+                    _log(project, f"transition {a_idx}→{b_idx}: trimmed cond "
+                                  f"{ic_ref_path.name} ({cond_dur:.2f}s) → "
+                                  f"{trimmed.name} ({max_cond_sec:.2f}s)")
+                    ic_ref_path = trimmed
+            ic_lora_extras = [
+                "--ic_loras", f"{ic_file}:{ic_strength}",
+                "--ic_lora_reference_video" if is_video else "--ic_lora_reference",
+                str(ic_ref_path),
+                "--ic_lora_reference_strength", f"{ic_ref_strength:.3f}",
+                "--ic_lora_frame_idx", str(ic_frame_idx),
+            ]
+            cmd += ic_lora_extras
+        ic_note = f", IC-LoRA cond @ idx {ic_lora_block.get('frame_idx', guide_frames)}" \
+                  if ic_lora_block else ""
         _log(project, f"transition {a_idx}→{b_idx}: {dur}s "
                       f"({guide_sec}s A-guide + {empty_end_sec - empty_start_sec}s empty + "
-                      f"{guide_sec}s B-guide), audio from {slice_start:.2f}s")
+                      f"{guide_sec}s B-guide), audio from {slice_start:.2f}s{ic_note}")
         rc = _run(cmd, log_path=project / "run.log",
                   env_override=_comfy_env_for("flux"))  # flux comfy = parallel with main
         if rc != 0:

@@ -30,13 +30,19 @@ Models required on the server:
 """
 from core import WorkflowGraph
 import os
+import sys
 import time
 
 
 CKPT = "ltx-2.3-22b-dev-fp8.safetensors"
+# fp8 is the recommended TE and what's installed; the older fp4_mixed default was
+# removed from the server in a disk cleanup. (Matches SKILL.md's stated default.)
 TEXT_ENCODER = "gemma_3_12B_it_fp8_e4m3fn.safetensors"
 UPSCALER = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 DISTILLED_LORA = "ltx-2.3-22b-distilled-lora-384.safetensors"
+# "Ingredients" reference-sheet IC-LoRA (Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients).
+INGREDIENTS_LORA = "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors"
+INGREDIENTS_NEG = "pc game, console game, video game, cartoon, childish, ugly, worst quality, inconsistent motion, blurry, jittery, distorted"
 NEG_DEFAULT = "pc game, console game, video game, cartoon, childish, ugly, blurry, low quality, watermark, distorted, still frame, text, captions, subtitles, signs, logos, lettering, typography, words, letters"
 
 # sigmas match the production corgi workflow — do not tweak without A/B testing
@@ -309,8 +315,16 @@ def _upsample_between(g, av_pass1, cond, vae, upscaler, image_ref,
     sep = g.node("LTXVSeparateAVLatent", av_latent=av_pass1[0])
     cropped = g.node("LTXVCropGuides",
                      positive=cond[0], negative=cond[1], latent=sep[0])
+    # Feed the CROPPED latent (cropped[2]) into the upsampler — not sep[0].
+    # When IC-LoRA / id_branch added conditioning frames in pass-1, those
+    # frames live in the latent and must be removed before upsampling,
+    # otherwise pass-2 refines 2x as many latent frames as the user
+    # requested → 2x-duration glitched output. The official lipdub
+    # 2-stage workflow wires its upsampler from CropGuides.latent for
+    # this reason. The basic ia2v 2-stage workflow (no AddGuide) can use
+    # sep[0] because it has no cond frames to strip.
     upsampled = g.node("LTXVLatentUpsampler",
-                       samples=sep[0], upscale_model=upscaler[0], vae=vae)
+                       samples=cropped[2], upscale_model=upscaler[0], vae=vae)
     if image_ref is not None and refine_guide_strength > 0:
         bypass = g.node("PrimitiveBoolean", value=False)
         video_re = g.node("LTXVImgToVideoInplace",
@@ -459,6 +473,7 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
            ic_lora_reference_filename=None,
            ic_lora_reference_strength=1.0,
            ic_lora_reference_size=None,
+           ic_lora_reference_loop=False,
            ckpt=CKPT, text_encoder=TEXT_ENCODER):
     """
     ic_loras: optional list of (lora_name, strength) tuples. Each is loaded
@@ -521,7 +536,20 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
         is_video_ref = bool(ic_lora_reference_filename and
                             str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
                             in ("mp4", "mov", "webm", "mkv"))
-        if is_video_ref:
+        if ic_lora_reference_loop and not is_video_ref:
+            # Ingredients "reference sheet" path. The sheet is a STILL that the
+            # model expects as a static video at the output resolution (looped
+            # across frames, downscale factor 1). Build that batch in-graph —
+            # LoadImage -> ImageScale(WxH) -> RepeatImageBatch(length) — so we
+            # avoid an external ffmpeg/mp4 round-trip. This is the correct path
+            # for ltx-2.3-22b-ic-lora-ingredients; the ImagePrepForICLora (HDR)
+            # branch below pads/squishes the sheet into a half-frame diptych.
+            ic_load = g.node("LoadImage", image=ic_lora_reference_filename)
+            ic_scaled = g.node("ImageScale", image=ic_load[0],
+                               upscale_method="lanczos",
+                               width=int(width), height=int(height), crop="disabled")
+            ic_ref_prep = g.node("RepeatImageBatch", image=ic_scaled[0], amount=int(length))
+        elif is_video_ref:
             # Match the official Lightricks LTX-2.3 IC-LoRA Union-Control
             # workflow: LoadVideo → GetVideoComponents[image] →
             # ResizeImageMaskNode 'scale to multiple' (32) → LTXAddVideoICLoRAGuide.image.
@@ -630,22 +658,13 @@ def _build(prompt, *, fps, width, height, length, seed, filename_prefix,
                          source_audio_filename=source_audio_filename,
                          source_audio_seconds=source_audio_seconds)
     else:
-        # ┌─ 2-PASS IC-LoRA TODO ─────────────────────────────────────────┐
-        # │ When ic_lora_active AND fast=False, we should ALSO re-apply  │
-        # │ LTXAddVideoICLoRAGuide on the upsampled pass-2 latent —      │
-        # │ same pattern as id_branch below. Without it, the IC-LoRA's   │
-        # │ conditioning is dropped through the refine step. See         │
-        # │ STRUCTURAL-FOLLOWUPS.md "2-pass IC-LoRA refine — open work"  │
-        # │ for the ~30-LOC fix sketch. Not yet implemented because all  │
-        # │ current renders are fast=True for iteration speed.           │
-        # └──────────────────────────────────────────────────────────────┘
+        # 2-pass refine path. _upsample_between strips IC-LoRA / id_branch
+        # cond frames from the latent before upsampling (see comment in
+        # that helper) so pass-2 refines only the requested-length latent.
         av_for_pass2, cropped_cond = _upsample_between(
             g, av_pass1, cond, vae=checkpoint[2], upscaler=upscaler,
             image_ref=image_ref,
             refine_guide_strength=refine_guide_strength)
-        # Re-apply identity guide on the upsampled pass-2 latent.
-        # av_for_pass2 is AV-concatenated; split → AddGuide on video →
-        # re-concat with the preserved audio latent.
         final_cond = cropped_cond
         if id_branch is not None:
             sep2 = g.node("LTXVSeparateAVLatent", av_latent=av_for_pass2[0])
@@ -683,6 +702,35 @@ def ltx2_text_to_video(prompt, seconds=5, fps=24,
                   seed=seed, filename_prefix=filename_prefix,
                   negative=negative, fast=fast,
                   camera_lora=camera_lora, camera_lora_strength=camera_lora_strength,
+                  ckpt=checkpoint_name or CKPT,
+                  text_encoder=text_encoder or TEXT_ENCODER)
+
+
+def ltx2_ingredients_to_video(sheet_image, prompt, seconds=5, fps=24,
+                              width=768, height=448,
+                              filename_prefix="ltx2_ingredients",
+                              seed=None, negative=None, fast=False,
+                              lora_strength=1.4, reference_strength=1.0,
+                              checkpoint_name=None, text_encoder=None, **_):
+    """LTX-2.3 'ingredients' IC-LoRA — reference-sheet character/prop/location control.
+
+    sheet_image: a single composite reference sheet already in the server input dir
+      (one clean panel per character/prop/location, black bg, no text). It is looped
+      in-graph into a static reference video at the output resolution (downscale 1)
+      and injected via LTXAddVideoICLoRAGuide, so the generated clip keeps the sheet's
+      elements consistent. Trained bucket: 768x448 / 121f / 24fps, LoRA strength 1.4.
+    prompt: a rich scene description naming the sheet's elements. The training format
+      was 'Reference sheet: <panels>\\n\\nGenerated video: <action>'; a single
+      cinematic description also works."""
+    length = _round_length(seconds, fps)
+    return _build(prompt, fps=fps, width=width, height=height, length=length,
+                  seed=seed, filename_prefix=filename_prefix,
+                  negative=negative if negative is not None else INGREDIENTS_NEG,
+                  fast=fast,
+                  ic_loras=[(INGREDIENTS_LORA, float(lora_strength))],
+                  ic_lora_reference_filename=sheet_image,
+                  ic_lora_reference_strength=float(reference_strength),
+                  ic_lora_reference_loop=True,
                   ckpt=checkpoint_name or CKPT,
                   text_encoder=text_encoder or TEXT_ENCODER)
 
@@ -767,6 +815,8 @@ def _flf2v_graph_core(prompt, *, fps, width, height, length, seed, filename_pref
                       first_guide_strength=0.7, last_guide_strength=0.7,
                       refine_guide_strength=1.0, extra_loras=None,
                       camera_lora=None, camera_lora_strength=0.8,
+                      ic_loras=None, ic_lora_reference_filename=None,
+                      ic_lora_reference_strength=1.0,
                       ckpt=CKPT, text_encoder=TEXT_ENCODER):
     g = WorkflowGraph()
     checkpoint, clip, audio_vae, upscaler = _loaders(g, ckpt, text_encoder)
@@ -775,12 +825,64 @@ def _flf2v_graph_core(prompt, *, fps, width, height, length, seed, filename_pref
         model = g.node("LoraLoaderModelOnly", model=model[0],
                        lora_name=lora_name, strength_model=float(lora_strength))
     model = _apply_extra_lora(g, model, camera_lora, camera_lora_strength)
+    # IC-LoRA stack (e.g. Union-Control with expanding-circles ref video) —
+    # applied AFTER distilled + transition + camera LoRAs so it sits closest
+    # to the sampler. Mirrors the _build pattern. Operator-driven addition
+    # 2026-05-16: lets flf2v (with transition LoRA) be driven by an audio-
+    # onset cond video for the masked middle morph.
+    ic_lora_active = bool(ic_loras and ic_lora_reference_filename)
+    ic_loaded = None
+    if ic_loras:
+        for lora_name, lora_strength in ic_loras:
+            ic_load = g.node("LTXICLoRALoaderModelOnly",
+                              model=model[0],
+                              lora_name=lora_name,
+                              strength_model=float(lora_strength))
+            model = ic_load
+            ic_loaded = ic_load
     cond = _encode_prompts(g, clip[0], prompt, negative, fps)
     first_img = first_img_builder(g)
     last_img = last_img_builder(g)
     empty_video = g.node("EmptyLTXVLatentVideo",
                          width=int(width), height=int(height),
                          length=int(length), batch_size=1)
+    # IC-LoRA reference conditioning — chain on the empty latent BEFORE
+    # the flf2v first/last AddGuide nodes so the cond's keyframe_idxs
+    # land first. (Order matters for downstream LTXVCropGuides — see
+    # the same comment in _build.)
+    if ic_lora_active:
+        is_video_ref = bool(
+            str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
+            in ("mp4", "mov", "webm", "mkv"))
+        if is_video_ref:
+            ic_load_ref = g.node("LoadVideo", file=ic_lora_reference_filename)
+            ic_components = g.node("GetVideoComponents", video=ic_load_ref[0])
+            ic_ref_prep = g.node("ResizeImageMaskNode", **{
+                "input": ic_components[0],
+                "resize_type": "scale to multiple",
+                "resize_type.multiple": 32,
+                "scale_method": "lanczos",
+            })
+        else:
+            ic_load_ref = g.node("LoadImage", image=ic_lora_reference_filename)
+            ic_ref_prep = g.node("ImagePrepForICLora",
+                                  reference_image=ic_load_ref[0],
+                                  output_width=int(width),
+                                  output_height=int(height),
+                                  border_width=0)
+        ic_guide = g.node("LTXAddVideoICLoRAGuide",
+                           positive=cond[0], negative=cond[1],
+                           vae=checkpoint[2], latent=empty_video[0],
+                           image=ic_ref_prep[0],
+                           frame_idx=0,
+                           strength=float(ic_lora_reference_strength),
+                           latent_downscale_factor=ic_loaded[1],
+                           crop="disabled",
+                           use_tiled_encode=False,
+                           tile_size=256,
+                           tile_overlap=64)
+        cond = (ic_guide[0], ic_guide[1])
+        empty_video = (ic_guide[2],)
     # LTXVAddGuide places image-frames FORWARD from frame_idx — a multi-frame
     # image at frame_idx=-1 is ill-defined (there's only 1 frame position at
     # -1, the image would be truncated or wrap weirdly). For multi-frame end
@@ -860,6 +962,9 @@ def ltx2_first_last_frame_to_video(first_frame_filename, last_frame_filename, pr
                                     use_transition_lora=False,
                                     transition_lora_strength=1.0,
                                     camera_lora=None, camera_lora_strength=0.8,
+                                    ic_loras=None,
+                                    ic_lora_reference_filename=None,
+                                    ic_lora_reference_strength=1.0,
                                     checkpoint_name=None, text_encoder=None,
                                     **_):
     """First-last-frame (optionally + audio) to video — effectively flfa2v
@@ -909,6 +1014,9 @@ def ltx2_first_last_frame_to_video(first_frame_filename, last_frame_filename, pr
         first_guide_strength=fgs, last_guide_strength=lgs,
         extra_loras=extra_loras,
         camera_lora=camera_lora, camera_lora_strength=camera_lora_strength,
+        ic_loras=ic_loras,
+        ic_lora_reference_filename=ic_lora_reference_filename,
+        ic_lora_reference_strength=ic_lora_reference_strength,
         ckpt=checkpoint_name or CKPT, text_encoder=text_encoder or TEXT_ENCODER)
 
 
@@ -1187,6 +1295,17 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                     camera_lora=None,
                     camera_lora_strength=0.8,
                     debug_save_audio=False,
+                    ic_loras=None,
+                    ic_lora_reference_filename=None,
+                    ic_lora_reference_strength=1.0,
+                    # Where in the transition latent the IC-LoRA cond starts.
+                    # Default 0 keeps back-compat with non-transition callers.
+                    # For transitions, set to the empty-middle start (= 1.0s
+                    # @ 24fps = frame 24) to avoid frame_idx=0 collision with
+                    # the A-side LTXVAddGuide — colliding pixel-frame starts
+                    # underflow LTXVCropGuides' num_keyframes count and pass-2
+                    # refines the un-stripped extras as content (5-9s glitch).
+                    ic_lora_frame_idx=0,
                     checkpoint_name=None, text_encoder=None,
                     **_):
     """Transition clip scene N → scene N+1 via the ltx2.3-transition LoRA
@@ -1280,14 +1399,32 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
     model = _apply_extra_lora(g, model, camera_lora, camera_lora_strength)
     model = g.node("LoraLoaderModelOnly", model=model[0],
                    lora_name=TRANSITION_LORA, strength_model=1.0)
+    # IC-LoRA stack — closest to sampler. Operator request 2026-05-16:
+    # let the transition use pitch-tracking polyfield cond (same as the
+    # ascent and tunnel-drop scenes) during the masked middle.
+    ic_lora_active = bool(ic_loras and ic_lora_reference_filename)
+    ic_loaded = None
+    if ic_loras:
+        for lora_name, lora_strength in ic_loras:
+            ic_load = g.node("LTXICLoRALoaderModelOnly",
+                              model=model[0],
+                              lora_name=lora_name,
+                              strength_model=float(lora_strength))
+            model = ic_load
+            ic_loaded = ic_load
     cond = _encode_prompts(g, clip[0], prompt, negative, fps)
 
     # Base latent — empty (zeros), of the correct length. Then AddNoise
-    # with sigma=1.0 fills it with pure noise. LTX reference workflows
-    # VAE-encode a real video for this (non-zero latent throughout); we
-    # synthesize equivalent via noise so the sampler's denoising step sees
-    # a proper diffusion starting point in the masked region (rather than
-    # zeros, which can cause mid-mask motion collapse).
+    # with sigma=1.0 fills it with pure noise BEFORE the IC-LoRA guide
+    # injects its cond frames. This ordering is critical: AddNoise at
+    # sigma=1.0 does `out["samples"] = noise * sigma + samples * sqrt(1-sigma²)
+    # = noise + 0` — it WIPES the samples tensor. If AddNoise runs AFTER
+    # LTXAddVideoICLoRAGuide, the cond's injected reference frames at
+    # frame_idx positions get clobbered with noise, and the polyfield /
+    # tunnel cond never reaches the sampler. The conditioning metadata
+    # (latent.copy() preserves dict keys) survives but the latent values
+    # the LoRA was supposed to attend to are gone. Symptom: cond is
+    # invisible in the output despite ref_strength=1.0.
     empty_video = g.node("EmptyLTXVLatentVideo",
                          width=int(width), height=int(height),
                          length=length_frames, batch_size=1)
@@ -1300,6 +1437,42 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                          noise=init_noise[0],
                          sigmas=init_sigmas[0],
                          latent_image=empty_video[0])
+    # IC-LoRA reference conditioning — apply on the NOISY latent so the
+    # cond's reference frames at frame_idx positions land on top of the
+    # noise (preserved through the rest of the pipeline).
+    if ic_lora_active:
+        is_video_ref = bool(
+            str(ic_lora_reference_filename).lower().rsplit(".", 1)[-1]
+            in ("mp4", "mov", "webm", "mkv"))
+        if is_video_ref:
+            ic_load_ref = g.node("LoadVideo", file=ic_lora_reference_filename)
+            ic_components = g.node("GetVideoComponents", video=ic_load_ref[0])
+            ic_ref_prep = g.node("ResizeImageMaskNode", **{
+                "input": ic_components[0],
+                "resize_type": "scale to multiple",
+                "resize_type.multiple": 32,
+                "scale_method": "lanczos",
+            })
+        else:
+            ic_load_ref = g.node("LoadImage", image=ic_lora_reference_filename)
+            ic_ref_prep = g.node("ImagePrepForICLora",
+                                  reference_image=ic_load_ref[0],
+                                  output_width=int(width),
+                                  output_height=int(height),
+                                  border_width=0)
+        ic_guide = g.node("LTXAddVideoICLoRAGuide",
+                           positive=cond[0], negative=cond[1],
+                           vae=checkpoint[2], latent=noisy_video[0],
+                           image=ic_ref_prep[0],
+                           frame_idx=int(ic_lora_frame_idx),
+                           strength=float(ic_lora_reference_strength),
+                           latent_downscale_factor=ic_loaded[1],
+                           crop="disabled",
+                           use_tiled_encode=False,
+                           tile_size=256,
+                           tile_overlap=64)
+        cond = (ic_guide[0], ic_guide[1])
+        noisy_video = (ic_guide[2],)
 
     # Resolve raw frame indices — either passed directly, or derived from
     # song-aware timing params. Song-time → frame conversion uses exact
@@ -1369,7 +1542,21 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
                      + float(lat_idx) / float(fps_int)
                      - float(next_video_song_start_sec)
                      + float(next_video_vocal_offset_sec)) * fps_int))
-                src_frame = max(0, src_frame)
+                # If the latent position maps to BEFORE scene B starts
+                # (negative src_frame), drop it. Old behaviour clamped to
+                # 0, which silently locked multiple latent positions to
+                # scene B's first frame — every anchor became "snap to
+                # scene B's static head", killing the morph's freedom in
+                # the empty middle. Better to skip the anchor entirely
+                # (the morph LoRA + IC-LoRA cond can carry the transition
+                # without it) and warn loudly.
+                if src_frame < 0:
+                    print(f"[ltx2_transition] WARN: b_sparse latent_idx={lat_idx} "
+                          f"maps to next_video src_frame={src_frame} (BEFORE "
+                          f"scene B starts at song-time "
+                          f"{next_video_song_start_sec}s); skipping this anchor",
+                          file=sys.stderr)
+                    continue
             else:
                 src_frame = 0
             ref = _video_range_frames(
@@ -1587,6 +1774,7 @@ def ltx2_transition(first_frame_filename, last_frame_filename, prompt,
 
 
 # -------- unchanged utility --------
+
 
 def extract_last_frame(video_server_path, filename_prefix="last_frame"):
     """Extract the last frame from a ComfyUI output video.

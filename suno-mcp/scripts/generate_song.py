@@ -222,7 +222,7 @@ def _audio_url_from_download_text(base: str, body: str) -> str | None:
     ``Stream URL: <SUNO_PUBLIC_URL>/audio/<short>.mp3`` — we ignore the
     embedded host (cross-tailnet agents can't reach it) and rebuild the
     URL against the agent's configured ``SUNO_MCP_URL`` base, mirroring
-    how the same Worker bridge serves both ``/mcp`` and ``/audio/*``.
+    how the configured Suno server serves both ``/mcp`` and ``/audio/*``.
     """
     m = _FILENAME_RE.search(body)
     if m:

@@ -251,6 +251,13 @@ class PolyField:
         self.sidesBase = 6.0
         self.scaleK = 1.0
         self.energy = 0.4
+        # Vocal-pitch-driven pulse — bumps with pitchN² on each vocal
+        # onset (see on_vocals_note), decays in step(). Used by render()
+        # to scale polygon size AND line thickness so peak vocals (Db5,
+        # pitchN ≈ 1.0) make the fractal take over the screen with
+        # thick lines, while low-pitch sustains leave the baseline
+        # polygon ring untouched. Operator request 2026-05-16.
+        self.vocal_pulse = 0.0
         self.countMod = 0
         self.volume = 0.0
         self.offsets: list[dict] = []
@@ -266,6 +273,50 @@ class PolyField:
                 "phase": random.random() * math.pi * 2,
             })
         self.offsetsFor = n
+
+    def on_drum_hit(self, note: dict):
+        """Drum kick/snare → big energy + vocal_pulse spike. Each hit
+        explodes the polyfield outward briefly. Magnitude scales with
+        velocity. Operator request 2026-05-16: "something explosive
+        happening when the drum hits back again" — drum-driven scale
+        and line-thickness spikes make the drum-back-in moment land
+        visually after a silence."""
+        v = note["velocity"]
+        # Reuse vocal_pulse for size+thickness modulation — same envelope
+        # used by render(), so drum hits AND vocal peaks both swell the
+        # fractal. Drum impulses are roughly velocity-proportional;
+        # cap so a single hit doesn't peg pulse at 1.0 instantly.
+        self.vocal_pulse = min(1.0, self.vocal_pulse + 0.4 * v)
+        self.energy = min(1.0, self.energy + 0.3 + v * 0.3)
+
+    def on_vocals_note(self, note: dict, rng: dict):
+        """Vocal-pitch driven polygon-spin. Higher vocal notes ADD positive
+        rotV impulse (CW); the magnitude scales with pitch × velocity.
+        Operator request 2026-05-16: the fractal "should spin faster
+        driven by the pitch of the voice". Unlike guitar's (pitchN - 0.5)
+        × 6 mapping (which gives ±polarity around the mid-pitch), vocals
+        always push CW so sustained high-vocal phrases accelerate spin
+        monotonically through the climax. The natural exponential decay
+        on rotV (`*= 0.6^dt`) pulls it back down when vocals fall silent,
+        so the suspension before the drop reads as a deceleration."""
+        v = note["velocity"]
+        pitchN = norm_pitch(note["midi"], rng)
+        self.energy = min(1.0, self.energy + 0.2 + v * 0.3)
+        # SQUARED pitch impulse → peak Db5 spins ~4× the mid-pitch
+        # baseline. Operator request 2026-05-16: "the peak should be
+        # like 4x of the normal speed". At pitchN = 0.5 the impulse is
+        # 0.25 × 4 × (0.5+v) ≈ 1; at pitchN = 1.0 it's 1.0 × 4 × (0.5+v)
+        # ≈ 4 — a clean 4× ratio that the rotV decay (* 0.6^dt) then
+        # smooths into proportional sustained spin.
+        self.rotV += (pitchN ** 2) * 4 * (0.5 + v)
+        # Pulsate: scale + line width swell at peak vocals. vocal_pulse
+        # accumulates with pitchN² and decays in step() (half-life ~1s).
+        # At sustained Db5 it caps near 1.0; mid-pitch sits ~0.25.
+        # Render() multiplies polygon scale by (1 + pulse * 1.8) → up
+        # to 2.8× at peak (covers the screen), and line width by
+        # (1 + pulse * 4) → up to 5× thickness at peak.
+        self.vocal_pulse = min(1.0,
+                               self.vocal_pulse + (pitchN ** 2) * (0.3 + v * 0.4))
 
     def on_guitar_note(self, note: dict, rng: dict):
         v = note["velocity"]
@@ -294,6 +345,10 @@ class PolyField:
         # feedback "i don't see the friendly polygons as much"). The
         # decay rate is unchanged.
         self.energy = max(0.30, self.energy * math.pow(0.4, dt))
+        # Decay vocal_pulse — half-life ~1.0s so sustained Db5 holds
+        # near peak through the vocal note and ramps down across the
+        # silence between phrases.
+        self.vocal_pulse *= math.pow(0.5, dt)
         # Smoothed volume from active notes (sum velocities)
         vol = 0.0
         n = 0
@@ -315,14 +370,19 @@ class PolyField:
         # sides to 12+ which renders indistinguishable from a circle.
         sides = max(3.0, min(8.0,
                              self.sidesBase + wSlow * 1.5 + wFast * 0.6))
-        baseScale = min(self.W, self.H) * 0.42 * self.scaleK
+        # Vocal-pitch pulsate modulates BOTH scale and line thickness.
+        # At peak vocal_pulse ≈ 1.0: scale × 2.8 (covers the frame),
+        # line × 5.0 (thick). At baseline pulse = 0: identity (1×).
+        pulse_scale = 1.0 + self.vocal_pulse * 1.8
+        pulse_lw = 1.0 + self.vocal_pulse * 4.0
+        baseScale = min(self.W, self.H) * 0.42 * self.scaleK * pulse_scale
         scale = baseScale * (0.55 + 0.45 * wMed)
         target_count = max(3, round(self.count + self.countMod + self.volume * 10))
         if target_count != self.offsetsFor:
             self._rebuild_offsets(target_count)
         cx, cy = self.W * 0.5, self.H * 0.5
         ring_radius = min(self.W, self.H) * 0.22
-        line_w = max(1, int(self.line_width * 0.5))
+        line_w = max(1, int(self.line_width * 0.5 * pulse_lw))
         max_jitter = min(self.W, self.H) * 0.18 * self.volume
         for r_idx in range(self.rings):
             for d in range(target_count):
@@ -600,6 +660,7 @@ def render(stems: dict, bpm: float, output: Path, *,
            duration: float, fps: int, width: int, height: int,
            start_sec: float = 0.0, line_width: float = 2.0,
            poly_count: int = 14, poly_rings: int = 1, show_beat: bool = True,
+           polyfield_only: bool = False,
            seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -644,18 +705,28 @@ def render(stems: dict, bpm: float, output: Path, *,
                 continue
             for note in ns:
                 if sid == "drums":
-                    _spawn_drums(particles, note, meta[sid], state, width, height, shake_state)
-                elif sid == "bass":
+                    if not polyfield_only:
+                        _spawn_drums(particles, note, meta[sid], state, width, height, shake_state)
+                    # Kick/snare drives a polyfield explosion in
+                    # polyfield_only mode too — see on_drum_hit.
+                    polyfield.on_drum_hit(note)
+                elif sid == "bass" and not polyfield_only:
                     _spawn_bass(particles, note, meta[sid], state, width, height)
                 elif sid == "guitar":
                     polyfield.on_guitar_note(note, meta[sid]["range"])
-                elif sid == "synth":
+                elif sid == "synth" and not polyfield_only:
                     _spawn_synth(particles, note, meta[sid], state, width, height)
                 elif sid == "vocals":
-                    _spawn_vocals(particles, note, meta[sid], state, width, height)
-                elif sid == "backing":
+                    if not polyfield_only:
+                        _spawn_vocals(particles, note, meta[sid], state, width, height)
+                    # Vocal pitch ALSO drives the polygon-field spin —
+                    # see on_vocals_note for rationale. Operator request
+                    # 2026-05-16. Kept active even in polyfield_only mode
+                    # so the rotation is still vocal-driven.
+                    polyfield.on_vocals_note(note, meta[sid]["range"])
+                elif sid == "backing" and not polyfield_only:
                     _spawn_backing(particles, note, meta[sid], state, width, height)
-                elif sid == "fx":
+                elif sid == "fx" and not polyfield_only:
                     _spawn_fx(particles, note, meta[sid], state, width, height)
 
         # Build canvas
@@ -752,6 +823,13 @@ def main():
     p.add_argument("--poly-rings", type=int, default=1)
     p.add_argument("--no-beat-tick", action="store_true",
                    help="hide the corner beat markers")
+    p.add_argument("--polyfield-only", action="store_true",
+                   help="suppress all particle spawns (vocal sine, "
+                        "drum shake, bass bars, synth orbits, backing "
+                        "lines, fx flicker) — render JUST the polygon "
+                        "field. PolyField still gets onset notifications "
+                        "from guitar (draw) and vocals (spin) so the "
+                        "vocal-pitch-driven rotation is preserved.")
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
 
@@ -825,6 +903,7 @@ def main():
            line_width=args.line_width,
            poly_count=args.poly_count, poly_rings=args.poly_rings,
            show_beat=not args.no_beat_tick,
+           polyfield_only=args.polyfield_only,
            seed=args.seed)
 
 
