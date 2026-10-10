@@ -20,6 +20,16 @@ Five composable [AgentSkills](https://agentskills.ai/) that build on each other 
 
 ## The skills
 
+### Easel API, CLI and internal/external agents
+
+For Easel LTX-2.5 generation, see the
+[Easel agent contract](comfyui/references/easel-agent-generation.md): versioned
+capabilities, curated LoRA discovery, timed still-image guides, exact seeds,
+managed references and submit-once job recovery. The examples require the
+corresponding server/CLI/Media MCP generation-controls changes; discover the
+connected endpoint rather than assuming a published document means deployment.
+The direct-Comfy commands below are a separate legacy LTX-2.3 path.
+
 ### [`comfyui/`](comfyui/) — direct ComfyUI REST access
 
 A thin Python wrapper that submits ComfyUI workflows by name and downloads the outputs. Everything goes through one CLI:
@@ -48,7 +58,10 @@ python3 scripts/comfy_graph.py last_frame --video_path /server/path/to/clip.mp4 
 python3 scripts/comfy_graph.py dump  t2i --prompt "..."                  # print workflow JSON, no execute
 ```
 
-Add `dump` as a prefix to any workflow command for a side-effect-free preview of the workflow JSON. Useful for diffing against `object_info` to detect node-class drift after a ComfyUI upgrade.
+Add `dump` as a prefix to inspect workflow JSON without submitting generation.
+Commands with local references can still upload those references while building
+the graph; `dump` is not a universally side-effect-free probe. Use isolated
+fixtures/mocks for a no-network graph comparison against `object_info`.
 
 Flags shared across LTX video commands: `--fps`, `--width`, `--height`, `--seconds`, `--seed`, `--negative`, `--camera-lora {static|dolly-{in,out,left,right}|jib-{up,down}}`, `--camera-lora-strength`, `--fast` (skip 2-pass refine).
 
