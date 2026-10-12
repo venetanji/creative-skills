@@ -120,3 +120,49 @@ The five-second body GLB contains one skinned mesh, a 127-joint skeleton,
 and one animation with 150 keyframes. Server execution took approximately
 117 seconds. The overlay was decoded with `ffprobe` and visually checked.
 These tests do not establish limits for longer or multi-person clips.
+
+## OpenClaw GLB Attachments
+
+OpenClaw `2026.9.6` and `2026.9.9` recognize GLB bytes but their host-local attachment safety
+allowlist rejects `model/gltf-binary`. This is separate from ComfyUI generation,
+file size limits, and filesystem read permissions.
+
+For these gateway versions, apply the narrowly scoped compatibility patch as the
+owner of the installed OpenClaw package, then restart the gateway:
+
+```bash
+node comfyui/scripts/enable_openclaw_glb.mjs /usr/local/lib/node_modules/openclaw/dist
+node --test comfyui/scripts/test_openclaw_glb.mjs
+```
+
+The patch allows content-sniffed `model/gltf-binary`, classifies it as a document,
+and adds the `.glb` MIME mapping. It does not permit arbitrary binary files,
+extension-only spoofing, or JSON glTF. Existing path and size restrictions remain
+in force. Reapplying is safe; unfamiliar bundle layouts fail before any writes.
+For Docker deployments, apply it in the image build so container recreation and
+package reinstalls do not silently drop support. Do not rename GLBs to another
+extension to bypass the safety check.
+
+The Thor gateway Dockerfile pins `OPENCLAW_VERSION=2026.9.9` and applies the
+patch during the image build, not just to a running container. Rebuilds and
+container recreation therefore retain GLB support. Future version upgrades
+must update the version pin and rerun the attachment tests; the compatibility
+helper fails the build rather than silently accepting an unfamiliar layout.
+
+The custom gateway entrypoint runs `openclaw doctor --fix --non-interactive`
+against the mounted state before starting the gateway. This is required for
+schema-changing upgrades because the custom entrypoint bypasses OpenClaw's
+standard Docker startup migration check. Before upgrading, retain a verified
+state backup; rolling back requires restoring compatible state as well as the
+old image. The gateway has a six-minute graceful shutdown budget so active work
+and SQLite writes can finish before container replacement.
+
+The seven attachment tests include the actual previously rejected GLB, native
+host-local loading, MIME mapping, document classification, idempotency, and
+rejection of arbitrary binary/plain-text bytes disguised as `.glb`:
+
+```bash
+OPENCLAW_DIST_DIR=/usr/local/lib/node_modules/openclaw/dist \
+GLB_TEST_FILE=/absolute/path/to/preview3d.glb \
+node --test comfyui/scripts/test_openclaw_glb.mjs
+```

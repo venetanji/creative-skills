@@ -202,6 +202,9 @@ tracking, RT-DETR, MoGe camera estimation, face expressions, hand refinement,
 and temporal smoothing. For limited VRAM, reduce the batch size first; only
 disable tracking on single-person clips. `dump sam3d` performs no uploads.
 
+If OpenClaw rejects the GLB with "local attachment allowlist", do not regenerate
+the mesh; see the gateway compatibility fix in [SAM 3D Body setup](references/sam3d-body.md#openclaw-glb-attachments).
+
 ## Guide video generation with authored WebGL spaces
 
 For camera paths through a 3D environment, render registered RGB and depth from
