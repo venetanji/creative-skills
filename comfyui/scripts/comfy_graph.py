@@ -5,6 +5,7 @@ Usage:
   python comfy_graph.py t2i   --prompt "a cat" [--notify-target discord:...]
   python comfy_graph.py i2i   --image photo.jpg --prompt "cat wearing hat"
   python comfy_graph.py t2v   --prompt "a forest" --seconds 5
+  python comfy_graph.py h3-ia2v --image photo.jpg --audio track.mp3 --prompt "..." --frames 124
   python comfy_graph.py i2v   --image photo.jpg --prompt "person walking"
   python comfy_graph.py ia2v  --image photo.jpg --audio track.mp3 --prompt "..."
   python comfy_graph.py ingredients --sheet sheet.png --prompt "..." --seconds 5   # IC-LoRA reference-sheet character/prop/location consistency
@@ -40,7 +41,7 @@ from __future__ import annotations
 import sys, os, json, time, urllib.request
 from pathlib import Path
 from core import _submit_and_wait, upload_if_local
-import flux2, ltx2, tts, post, sam3d_body
+import flux2, ltx2, tts, post
 from flux2 import (flux2_text_to_image, flux2_single_image_edit, flux2_double_image_edit,
                     flux2_double_image_edit_multiprompt, flux2_multiple_angles,
                     flux2_multi_reference_edit, flux2_multi_reference_edit_multiprompt)
@@ -57,7 +58,7 @@ import core
 # the flux/default server. Bots submit via this CLI and shouldn't have to
 # worry about which server to target.
 VIDEO_COMMANDS = {"t2v", "i2v", "ia2v", "flf2v", "transition", "multiguide",
-                  "continuation", "ingredients", "sam3d"}
+                  "continuation", "ingredients", "sam3d", "h3-t2v", "h3-i2v", "h3-r2v", "h3-ia2v"}
 # vconcat uses ComfyUI-FFmpeg nodes (MergingVideoByTwo / AddAudio) — pure
 # CPU stream-copy, no GPU needed, so it goes to the flux server to keep
 # the video GPU free for actual LTX renders.
@@ -105,6 +106,7 @@ def _parse_args(args):
     # interpreting any other flag, so JSON loading happens before
     # CLI flags so CLI can override.
     leftover = []
+    malformed = []
     i = 0
     while i < len(args):
         a = args[i]
@@ -113,6 +115,7 @@ def _parse_args(args):
                 json_path = args[i + 1]
                 i += 2
                 continue
+            malformed.append("--input-json requires a path")
             i += 1
             continue
         leftover.append(a)
@@ -159,7 +162,10 @@ def _parse_args(args):
                 opts[key] = True
                 i += 1
         else:
+            malformed.append(f"unexpected positional token: {a}")
             i += 1
+    if "model_profile" in opts and malformed:
+        raise ValueError("; ".join(malformed))
     return opts
 
 
@@ -287,6 +293,7 @@ def _h_run(opts, seed, prompt):
 
 
 def _h_sam3d(opts, seed, prompt):
+    import sam3d_body
     video = opts.get("video", "")
     if not video:
         raise ValueError("sam3d requires --video")
@@ -581,6 +588,10 @@ def main():
         print(__doc__); sys.exit(1)
 
     cmd  = args[0]
+    if cmd in {"h3-t2v", "h3-i2v", "h3-r2v", "h3-ia2v"}:
+        from h3 import main as h3_main
+        h3_main(args[1:], base_url=_resolve_base_url(cmd), dump=dump_only, mode=cmd)
+        return
     opts = _parse_args(args[1:])
 
     # Route to the right comfy server based on command class. Lets bots
@@ -594,7 +605,7 @@ def main():
     output_dir  = Path(opts.get("output_dir", "outputs"))
     timeout     = int(opts.get("timeout", DEFAULT_TIMEOUTS.get(cmd, 600)))
     seed_raw    = opts.get("seed")
-    seed        = int(seed_raw) if seed_raw else None
+    seed        = seed_raw if "model_profile" in opts else int(seed_raw) if seed_raw else None
     notify      = opts.get("notify_target") or os.environ.get("OPENCLAW_NOTIFY_TARGET")
     caption_tpl = opts.get("caption_template")
     prompt      = opts.get("prompt", "")
@@ -603,7 +614,14 @@ def main():
     if handler is None:
         print(f"Unknown command: {cmd}\n{__doc__}"); sys.exit(1)
 
-    wf = handler(opts, seed, prompt)
+    if "model_profile" in opts:
+        from ltx_profile import prepare, strict_upload
+        wf, timeline = prepare(cmd, opts, seed, prompt, upload=strict_upload,
+                               probe=_probe_frame_count, dump=dump_only)
+        if timeline and opts.get("timeline_json"):
+            Path(opts["timeline_json"]).write_text(json.dumps(timeline, indent=2))
+    else:
+        wf = handler(opts, seed, prompt)
 
     if dump_only:
         print(json.dumps(wf, indent=2))
@@ -611,7 +629,7 @@ def main():
 
     prompt_id = _submit_and_wait(wf, output_dir, timeout, notify=notify,
                                  caption_template=caption_tpl,
-                                 user_prompt=prompt)
+                                 user_prompt=prompt, require_output="model_profile" in opts)
 
     # Save SRT writes the file server-side and returns its absolute path
     # as its STRING output. We capture it via ShowText and use the path's

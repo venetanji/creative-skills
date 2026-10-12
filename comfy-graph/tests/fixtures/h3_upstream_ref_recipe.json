@@ -1,0 +1,239 @@
+{
+  "source_sha256": "14b30659a057547e02bdd4bbbdda3f8670aa6d7d81d1d8d99c4f9ad1e2eabc44",
+  "nodes": [
+    {
+      "id": 123,
+      "type": "KSamplerSelect",
+      "widgets_values": [
+        "res_multistep"
+      ],
+      "inputs": []
+    },
+    {
+      "id": 124,
+      "type": "BasicScheduler",
+      "widgets_values": [
+        "simple",
+        20,
+        1
+      ],
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 252
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": 289
+        }
+      ]
+    },
+    {
+      "id": 126,
+      "type": "BasicGuider",
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 288
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 270
+        }
+      ]
+    },
+    {
+      "id": 127,
+      "type": "UNETLoader",
+      "widgets_values": [
+        "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "default"
+      ],
+      "inputs": []
+    },
+    {
+      "id": 141,
+      "type": "ComfySwitchNode",
+      "widgets_values": [
+        false
+      ],
+      "inputs": [
+        {
+          "name": "on_false",
+          "type": "MODEL",
+          "link": 287
+        },
+        {
+          "name": "on_true",
+          "type": "MODEL",
+          "link": 286
+        },
+        {
+          "name": "switch",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "switch"
+          },
+          "link": 290
+        }
+      ]
+    },
+    {
+      "id": 142,
+      "type": "ComfySwitchNode",
+      "widgets_values": [
+        false
+      ],
+      "inputs": [
+        {
+          "name": "on_false",
+          "type": "INT",
+          "link": 284
+        },
+        {
+          "name": "on_true",
+          "type": "INT",
+          "link": 283
+        },
+        {
+          "name": "switch",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "switch"
+          },
+          "link": 291
+        }
+      ]
+    },
+    {
+      "id": 143,
+      "type": "PrimitiveInt",
+      "widgets_values": [
+        20,
+        "fixed"
+      ],
+      "inputs": []
+    },
+    {
+      "id": 144,
+      "type": "PrimitiveInt",
+      "widgets_values": [
+        4,
+        "fixed"
+      ],
+      "inputs": []
+    },
+    {
+      "id": 145,
+      "type": "LoraLoaderModelOnly",
+      "widgets_values": [
+        "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+        1
+      ],
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 285
+        }
+      ]
+    },
+    {
+      "id": 146,
+      "type": "PrimitiveBoolean",
+      "widgets_values": [
+        false
+      ],
+      "inputs": []
+    }
+  ],
+  "links": [
+    [
+      252,
+      127,
+      0,
+      124,
+      0,
+      "MODEL"
+    ],
+    [
+      283,
+      144,
+      0,
+      142,
+      1,
+      "INT"
+    ],
+    [
+      284,
+      143,
+      0,
+      142,
+      0,
+      "INT"
+    ],
+    [
+      285,
+      127,
+      0,
+      145,
+      0,
+      "MODEL"
+    ],
+    [
+      286,
+      145,
+      0,
+      141,
+      1,
+      "MODEL"
+    ],
+    [
+      287,
+      127,
+      0,
+      141,
+      0,
+      "MODEL"
+    ],
+    [
+      288,
+      141,
+      0,
+      126,
+      0,
+      "MODEL"
+    ],
+    [
+      289,
+      142,
+      0,
+      124,
+      1,
+      "INT"
+    ],
+    [
+      290,
+      146,
+      0,
+      141,
+      2,
+      "BOOLEAN"
+    ],
+    [
+      291,
+      146,
+      0,
+      142,
+      2,
+      "BOOLEAN"
+    ]
+  ]
+}

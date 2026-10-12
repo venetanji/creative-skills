@@ -50,19 +50,11 @@ def _ffmpeg():
 MAX_SHOT_DURATION = 15.0          # LTX-2.3 OOM threshold at portrait resolution
 
 def _find_skill_script(rel: str) -> Path:
-    """Resolve a sibling-skill script across install locations.
-    Order: OpenClaw sandbox → host install (~/.openclaw) → repo checkout sibling.
-    """
-    candidates = [
-        Path(f"/home/sandbox/.openclaw/skills/{rel}"),
-        Path.home() / ".openclaw/skills" / rel,
-        Path(__file__).resolve().parent.parent.parent / rel.split("/", 1)[0] / rel.split("/", 1)[1],
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    # Last-resort default — caller will see ENOENT at first invocation.
-    return candidates[0]
+    """Prefer this checkout's helpers over independently installed copies."""
+    candidates = [Path(__file__).resolve().parents[2] / rel,
+                  Path('/home/sandbox/.openclaw/skills') / rel,
+                  Path.home() / '.openclaw/skills' / rel]
+    return next((p for p in candidates if p.exists()), candidates[0])
 
 COMFY = _find_skill_script("comfyui/scripts/comfy_graph.py")
 ELEVEN_SCENE = _find_skill_script("elevenlabs/scripts/eleven_scene_audio.py")
@@ -236,11 +228,11 @@ def _generate_anchor(spec: dict, project: Path, idx: int, shot: dict,
         common += ["--steps", str(int(anchor_cfg["steps"]))]
 
     if anchor_type == "t2i":
-        cmd = ["python3", str(COMFY), "t2i"] + common
+        cmd = [sys.executable, str(COMFY), "t2i"] + common
     elif anchor_type == "i2i":
-        cmd = ["python3", str(COMFY), "i2i", "--image", str(ref_paths[0])] + common
+        cmd = [sys.executable, str(COMFY), "i2i", "--image", str(ref_paths[0])] + common
     elif anchor_type == "i2i2":
-        cmd = ["python3", str(COMFY), "i2i2",
+        cmd = [sys.executable, str(COMFY), "i2i2",
                "--image1", str(ref_paths[0]),
                "--image2", str(ref_paths[1])] + common
     else:
@@ -288,7 +280,34 @@ def _resolve_image(spec: dict, project: Path, idx: int, ref: str | None) -> str 
 
 # ── per-shot ia2v render ──────────────────────────────────────────────
 
+def _profile_helper():
+    import importlib.util
+    path = _find_skill_script("drama-video/scripts/profiled_video.py")
+    module_spec = importlib.util.spec_from_file_location("profiled_video", path)
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    return module
+
+
+def _profile_plan(spec, project=None):
+    return _profile_helper().plan(spec, "shots", MAX_SHOT_DURATION, project=project,
+        prompts=[_expand_tokens(item["prompt"], _character_tokens(spec)) for item in spec.get("shots", [])])
+
+
+def _profile_command(spec, project, idx, rows, image):
+    return _profile_helper().command(__file__, spec, project, idx, rows, "shots", image)
+
+
+def _profile_render(spec, project, idx):
+    rows = _profile_plan(spec, project)
+    return _profile_helper().render(__file__, spec, project, idx, "shots", rows,
+        run=lambda cmd: _run(cmd, cwd=project, log_path=project / "run.log",
+                             env_override=_comfy_env_for("video")), ffmpeg=_ffmpeg())
+
+
 def _render_shot(spec: dict, project: Path, idx: int, shot: dict) -> None:
+    if (spec.get("video") or {}).get("model_profile"):
+        return _profile_render(spec, project, idx)
     if float(shot["duration_sec"]) > MAX_SHOT_DURATION:
         sys.exit(f"shot {idx} '{shot.get('label','?')}' duration "
                  f"{shot['duration_sec']}s exceeds {MAX_SHOT_DURATION}s cap "
@@ -415,7 +434,7 @@ def _render_shot(spec: dict, project: Path, idx: int, shot: dict) -> None:
         rs = shot.get("ingredients_reference_strength")
         if rs is not None:
             ing_extras += ["--reference_strength", str(float(rs))]
-        cmd = ["python3", str(COMFY), "ingredients",
+        cmd = [sys.executable, str(COMFY), "ingredients",
                "--sheet", str(sheet_path)] + ing_extras + ing_common
     elif use_continuation:
         prev_label = spec["shots"][idx - 2].get("label", "shot")
@@ -424,13 +443,13 @@ def _render_shot(spec: dict, project: Path, idx: int, shot: dict) -> None:
             sys.exit(f"shot {idx}: continue_from_prev set but prev shot mp4 "
                      f"not found at {prev_mp4} — render shot {idx-1} first")
         overlap = float(shot.get("overlap_seconds", 1.0))
-        cmd = ["python3", str(COMFY), "continuation",
+        cmd = [sys.executable, str(COMFY), "continuation",
                "--prev_video", str(prev_mp4),
                "--audio", str(slice_mp3),
                "--overlap-seconds", f"{overlap:.3f}",
                "--overlap-strength", str(shot.get("overlap_strength", 1.0))] + id_extras + common
     elif image_path is None:
-        cmd = ["python3", str(COMFY), "t2v"] + common
+        cmd = [sys.executable, str(COMFY), "t2v"] + common
     else:
         ia2v_extras: list[str] = []
         if idx > 1:
@@ -438,7 +457,7 @@ def _render_shot(spec: dict, project: Path, idx: int, shot: dict) -> None:
             prev_last = project / "shots" / f"{_shot_stem(idx - 1, prev_label)}-last.png"
             if prev_last.exists():
                 ia2v_extras += ["--image-refs", str(prev_last)]
-        cmd = ["python3", str(COMFY), "ia2v",
+        cmd = [sys.executable, str(COMFY), "ia2v",
                "--image", image_path,
                "--audio", str(slice_mp3)] + ia2v_extras + id_extras + common
 
@@ -466,6 +485,11 @@ def _render_shot(spec: dict, project: Path, idx: int, shot: dict) -> None:
 # ── stage commands ────────────────────────────────────────────────────
 
 def cmd_plan(spec: dict, project: Path) -> None:
+    if (spec.get("video") or {}).get("model_profile"):
+        rows = _profile_plan(spec, project)
+        count = _profile_helper().check_audio(spec, project, "shots", rows, _ffmpeg())
+        print(json.dumps({"timeline": rows, "decoded_master_samples_48k": count}, indent=2))
+        return
     shots = spec.get("shots") or []
     if not shots:
         sys.exit("spec has no `shots`")
@@ -536,6 +560,9 @@ def cmd_audio(spec: dict, project: Path) -> None:
 
 
 def cmd_anchors(spec: dict, project: Path) -> None:
+    if (spec.get("video") or {}).get("model_profile"):
+        _profile_plan(spec, project)  # Unsupported anchor generation must fail before upload.
+        return
     shots = spec.get("shots") or []
     generated = 0
     skipped = 0
@@ -573,6 +600,10 @@ def cmd_shots(spec: dict, project: Path) -> None:
 
 
 def cmd_assemble(spec: dict, project: Path) -> None:
+    if (spec.get("video") or {}).get("model_profile"):
+        helper = _profile_helper()
+        helper.invalidate_assembly_metadata(project, "shots")
+        return helper.assemble(__file__, spec, project, "shots", _profile_plan(spec, project), "ffmpeg")
     shots = spec.get("shots") or []
     if not shots:
         sys.exit("spec has no `shots`")
@@ -607,6 +638,11 @@ def cmd_assemble(spec: dict, project: Path) -> None:
 
 
 def cmd_all(spec: dict, project: Path, no_gate: bool = False) -> None:
+    if (spec.get("video") or {}).get("model_profile"):
+        rows = _profile_plan(spec, project)
+        helper = _profile_helper()
+        if helper.master(spec, project, "shots").is_file():
+            helper.check_audio(spec, project, "shots", rows, _ffmpeg())
     gates = {
         "audio": bool(spec.get("gate_confirm_audio", False)),
         "anchors": bool(spec.get("gate_confirm_anchors", True)),

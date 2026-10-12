@@ -1,0 +1,80 @@
+{
+  "ltx2_text_to_video/camera-error": {
+    "type": "ValueError",
+    "message": "camera_lora shortname 'not-a-camera' is not recognised. Valid shortnames: ['dolly-in', 'dolly-left', 'dolly-out', 'dolly-right', 'jib-down', 'jib-up', 'static']. Pass a full .safetensors filename for anything else.",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_image_to_video/camera-error": {
+    "type": "ValueError",
+    "message": "camera_lora shortname 'not-a-camera' is not recognised. Valid shortnames: ['dolly-in', 'dolly-left', 'dolly-out', 'dolly-right', 'jib-down', 'jib-up', 'static']. Pass a full .safetensors filename for anything else.",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_image_audio_to_video/camera-error": {
+    "type": "ValueError",
+    "message": "camera_lora shortname 'not-a-camera' is not recognised. Valid shortnames: ['dolly-in', 'dolly-left', 'dolly-out', 'dolly-right', 'jib-down', 'jib-up', 'static']. Pass a full .safetensors filename for anything else.",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_first_last_frame_to_video/camera-error": {
+    "type": "ValueError",
+    "message": "camera_lora shortname 'not-a-camera' is not recognised. Valid shortnames: ['dolly-in', 'dolly-left', 'dolly-out', 'dolly-right', 'jib-down', 'jib-up', 'static']. Pass a full .safetensors filename for anything else.",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_multi_guide_to_video/camera-error": {
+    "type": "ValueError",
+    "message": "camera_lora shortname 'not-a-camera' is not recognised. Valid shortnames: ['dolly-in', 'dolly-left', 'dolly-out', 'dolly-right', 'jib-down', 'jib-up', 'static']. Pass a full .safetensors filename for anything else.",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_transition/camera-error": {
+    "type": "ValueError",
+    "message": "camera_lora shortname 'not-a-camera' is not recognised. Valid shortnames: ['dolly-in', 'dolly-left', 'dolly-out', 'dolly-right', 'jib-down', 'jib-up', 'static']. Pass a full .safetensors filename for anything else.",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_continuation_to_video/camera-error": {
+    "type": "ValueError",
+    "message": "camera_lora shortname 'not-a-camera' is not recognised. Valid shortnames: ['dolly-in', 'dolly-left', 'dolly-out', 'dolly-right', 'jib-down', 'jib-up', 'static']. Pass a full .safetensors filename for anything else.",
+    "stdout": "",
+    "stderr": ""
+  },
+  "flux2_multi_reference_edit/refs-0": {
+    "type": "ValueError",
+    "message": "image_filenames must contain at least one reference",
+    "stdout": "",
+    "stderr": ""
+  },
+  "flux2_multi_reference_edit_multiprompt/refs-0": {
+    "type": "ValueError",
+    "message": "image_filenames must contain at least one reference",
+    "stdout": "",
+    "stderr": ""
+  },
+  "concat_videos/clips-0": {
+    "type": "ValueError",
+    "message": "video_filenames must be non-empty",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_multi_guide_to_video/index-count-error": {
+    "type": "ValueError",
+    "message": "guide_frame_indices has 1 entries but 2 guide images provided",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_multi_guide_to_video/index-alignment-error": {
+    "type": "ValueError",
+    "message": "guide_frame_indices must be multiples of 8, got 7",
+    "stdout": "",
+    "stderr": ""
+  },
+  "ltx2_multi_guide_to_video/strength-count-error": {
+    "type": "ValueError",
+    "message": "guide_strengths has 1 entries but 2 guide images provided",
+    "stdout": "",
+    "stderr": ""
+  }
+}

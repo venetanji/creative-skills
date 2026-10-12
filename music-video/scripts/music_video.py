@@ -117,7 +117,13 @@ def _require_ffmpeg():
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 # The comfyui and suno-mcp skills are sibling dirs under ~/.openclaw/skills/
 SKILLS_ROOT = SKILL_ROOT.parent
-COMFY = SKILLS_ROOT / "comfyui" / "scripts" / "comfy_graph.py"
+def _find_skill_script(rel: str) -> Path:
+    """Prefer checkout siblings; never silently mix in older installed helpers."""
+    candidates = [SKILLS_ROOT / rel, Path('/home/sandbox/.openclaw/skills') / rel,
+                  Path.home() / '.openclaw/skills' / rel]
+    return next((p for p in candidates if p.exists()), candidates[0])
+
+COMFY = _find_skill_script("comfyui/scripts/comfy_graph.py")
 SUNO  = SKILLS_ROOT / "suno-mcp" / "scripts" / "generate_song.py"
 VIDEO_JOIN = SKILLS_ROOT / "comfyui" / "scripts" / "video_join.py"
 
@@ -186,6 +192,8 @@ def _fill_scene_start_sec(spec: dict) -> None:
     """Auto-derive `start_sec` for scenes that omit it — cumulative sum of
     prior durations. Lets the agent write scenes as a flat sequential list
     with only `duration_sec`."""
+    if (spec.get("video") or {}).get("model_profile"):
+        return  # Profile planning derives integer-frame starts without float accumulation.
     scenes = spec.get("scenes") or []
     cursor = 0.0
     for s in scenes:
@@ -375,6 +383,11 @@ def _expand_subjects(text: str, spec: dict) -> str:
 
 
 def cmd_plan(spec: dict, project: Path) -> None:
+    if (spec.get("video") or {}).get("model_profile"):
+        rows = _profile_plan(spec, project)
+        count = _profile_helper().check_audio(spec, project, "scenes", rows, FFMPEG())
+        print(json.dumps({"timeline": rows, "decoded_master_samples_48k": count}, indent=2))
+        return
     scenes = spec.get("scenes", [])
     if not scenes:
         sys.exit("spec has no `scenes`")
@@ -693,21 +706,21 @@ def _generate_anchor(spec: dict, project: Path, idx: int, scene: dict, stem: str
                  f"got {len(ref_paths)}. Use `type: i2iN` for 3+.")
 
     if anchor_type == "t2i":
-        cmd = ["python3", str(COMFY), "t2i"] + common
+        cmd = [sys.executable, str(COMFY), "t2i"] + common
     elif anchor_type == "i2i":
-        cmd = ["python3", str(COMFY), "i2i", "--image", str(ref_paths[0])] + common
+        cmd = [sys.executable, str(COMFY), "i2i", "--image", str(ref_paths[0])] + common
     elif anchor_type == "i2i2":
-        cmd = ["python3", str(COMFY), "i2i2",
+        cmd = [sys.executable, str(COMFY), "i2i2",
                "--image1", str(ref_paths[0]),
                "--image2", str(ref_paths[1])] + common
     elif anchor_type == "i2iN":
         # 3+ references: comfy_graph.py i2iN takes a comma-separated list.
         images_csv = ",".join(str(p) for p in ref_paths)
-        cmd = ["python3", str(COMFY), "i2iN", "--images", images_csv] + common
+        cmd = [sys.executable, str(COMFY), "i2iN", "--images", images_csv] + common
     elif anchor_type == "angles":
         # Generates a batch — uses the first prompt as the primary anchor.
         angle_prompts = anchor_cfg.get("angle_prompts") or [anchor_cfg["prompt"]]
-        cmd = ["python3", str(COMFY), "multiprompt",
+        cmd = [sys.executable, str(COMFY), "multiprompt",
                "--image", str(ref_paths[0]),
                "--prompts", "\n".join(angle_prompts)] + common
     else:
@@ -748,6 +761,9 @@ def cmd_anchors(spec: dict, project: Path) -> None:
          scenes/NNN-label-anchor.png.
 
     Restart-safe and idempotent — skips anchors already on disk."""
+    if (spec.get("video") or {}).get("model_profile"):
+        _profile_plan(spec, project)  # Unsupported anchor generation must fail before upload.
+        return
     _ensure_dirs(project)
     generated = 0
     skipped = 0
@@ -774,7 +790,7 @@ def cmd_anchors(spec: dict, project: Path) -> None:
             w = int(vs["width"]  * anchor_scale)
             h = int(vs["height"] * anchor_scale)
             prefix = anchor_path.stem   # e.g. "anchor"
-            cmd = ["python3", str(COMFY), "t2i",
+            cmd = [sys.executable, str(COMFY), "t2i",
                    "--prompt", prompt,
                    "--width",  str(w),
                    "--height", str(h),
@@ -951,7 +967,36 @@ def _normalize_loras(scene: dict, vs: dict) -> list[dict]:
     return scene_loras
 
 
+def _profile_helper():
+    import importlib.util
+    path = _find_skill_script("drama-video/scripts/profiled_video.py")
+    module_spec = importlib.util.spec_from_file_location("profiled_video", path)
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    return module
+
+
+def _profile_plan(spec, project=None):
+    return _profile_helper().plan(spec, "scenes", MAX_SCENE_DURATION, project=project,
+        prompts=[_expand_subjects(item["prompt"], spec) for item in spec.get("scenes", [])])
+
+
+def _profile_command(spec, project, idx, rows, image):
+    return _profile_helper().command(__file__, spec, project, idx, rows, "scenes", image)
+
+
+def _profile_render(spec, project, idx):
+    rows = _profile_plan(spec, project)
+    return _profile_helper().render(__file__, spec, project, idx, "scenes", rows,
+        run=lambda cmd: _run(cmd, cwd=project, log_path=project / "run.log",
+                             env_override=_comfy_env_for("video")), ffmpeg=FFMPEG())
+
+
 def cmd_scene(spec: dict, project: Path, idx: int) -> None:
+    if (spec.get("video") or {}).get("model_profile"):
+        if not 1 <= idx <= len(spec.get("scenes") or []):
+            raise ValueError("scene index out of range")
+        return _profile_render(spec, project, idx)
     scenes = spec.get("scenes", [])
     if idx < 1 or idx > len(scenes):
         sys.exit(f"scene index out of range: {idx} (have {len(scenes)})")
@@ -1168,11 +1213,11 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
                        vs.get("ingredients_reference_strength"))
         if rs is not None:
             ing_extras += ["--reference_strength", str(float(rs))]
-        cmd = ["python3", str(COMFY), "ingredients",
+        cmd = [sys.executable, str(COMFY), "ingredients",
                "--sheet", str(sheet_path)] + ing_extras + ing_common
     elif image_path is None and not guides_yaml:
         # First scene with no anchor → fall back to t2v (no audio slice).
-        cmd = ["python3", str(COMFY), "t2v"] + common
+        cmd = [sys.executable, str(COMFY), "t2v"] + common
     elif guides_yaml:
         import importlib.util
         # Resolve storyboard/lib/guides.py from a sandbox install, the host
@@ -1207,7 +1252,7 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
         guides_paths = ",".join(str(p) for _, p, _ in resolved)
         frame_indices = ",".join(str(f) for f, _, _ in resolved)
         strengths = ",".join(f"{s:.3f}" for _, _, s in resolved)
-        cmd = ["python3", str(COMFY), "multiguide",
+        cmd = [sys.executable, str(COMFY), "multiguide",
                "--guides", guides_paths,
                "--frame_indices", frame_indices,
                "--strengths", strengths,
@@ -1241,7 +1286,7 @@ def cmd_scene(spec: dict, project: Path, idx: int) -> None:
                               vs.get("refine_guide_strength", 0.7))
         ia2v_extras += ["--base_guide_strength", f"{float(base_gs):.2f}",
                         "--refine_guide_strength", f"{float(refine_gs):.2f}"]
-        cmd = ["python3", str(COMFY), "ia2v",
+        cmd = [sys.executable, str(COMFY), "ia2v",
                "--image", image_path,
                "--audio", str(slice_mp3)] + ia2v_extras + common
 
@@ -1308,6 +1353,8 @@ def cmd_transitions(spec: dict, project: Path) -> None:
 
     Transitions run on COMFY_URL_FLUX (the 12GB GPU) so they can render in
     parallel with the main scene batch. Restart-safe."""
+    if (spec.get("video") or {}).get("model_profile"):
+        raise ValueError("unsupported profile transitions")
     vs = spec.get("video") or {}
     tv = vs.get("transitions") or {}
     if not tv.get("enabled"):
@@ -1419,7 +1466,7 @@ def cmd_transitions(spec: dict, project: Path) -> None:
         #            region and land cleanly on scene B's first in-stitch
         #            frame without a snap.
         #   Mask:    1.0-4.0s (audio drives invented motion from [24, 96])
-        cmd = ["python3", str(COMFY), "transition",
+        cmd = [sys.executable, str(COMFY), "transition",
                "--prev_video", str(a_mp4),
                "--next_video", str(b_mp4),
                "--audio", str(audio_slice),
@@ -1553,6 +1600,10 @@ def cmd_assemble(spec: dict, project: Path) -> None:
     dur/2 on that side (skip-front and/or trim-back). Each transition
     adds `dur` seconds. Net change per boundary is zero, so the song
     timeline stays locked regardless of how many transitions you use."""
+    if (spec.get("video") or {}).get("model_profile"):
+        helper = _profile_helper()
+        helper.invalidate_assembly_metadata(project, "scenes")
+        return helper.assemble(__file__, spec, project, "scenes", _profile_plan(spec, project), "ffmpeg")
     scenes = spec.get("scenes", [])
     n = len(scenes)
     if n == 0:
@@ -1627,12 +1678,7 @@ def cmd_assemble(spec: dict, project: Path) -> None:
     # drama-video uses). Pre-trim → strip audio → concat → mux song.
     ffmpeg = FFMPEG()
     import importlib.util
-    sb_candidates = [
-        Path("/home/sandbox/.openclaw/skills/storyboard/lib/assemble.py"),
-        Path.home() / ".openclaw/skills/storyboard/lib/assemble.py",
-        Path(__file__).resolve().parent.parent.parent / "storyboard/lib/assemble.py",
-    ]
-    sb_lib = next((p for p in sb_candidates if p.exists()), sb_candidates[-1])
+    sb_lib = _find_skill_script("storyboard/lib/assemble.py")
     m_spec = importlib.util.spec_from_file_location("storyboard_assemble", sb_lib)
     asm = importlib.util.module_from_spec(m_spec); m_spec.loader.exec_module(asm)
 
@@ -1662,6 +1708,11 @@ def cmd_all(spec: dict, project: Path, no_gate: bool = False) -> None:
          GPU time to the per-scene LTX renders. Bypass likewise.
 
     Without the gates the pipeline runs fully unattended."""
+    if (spec.get("video") or {}).get("model_profile"):
+        rows = _profile_plan(spec, project)
+        helper = _profile_helper()
+        if helper.master(spec, project, "scenes").is_file():
+            helper.check_audio(spec, project, "scenes", rows, FFMPEG())
     _ensure_dirs(project)
     cmd_song(spec, project)
 
@@ -1699,19 +1750,22 @@ def cmd_all(spec: dict, project: Path, no_gate: bool = False) -> None:
     scenes = spec.get("scenes") or []
     if not scenes:
         sys.exit("spec has no scenes — add scenes to song.yaml, then re-run `all`.")
-    assembled = sum(s["duration_sec"] for s in scenes)
-    longest_song = 0.0
-    for p in [project / "song.mp3", *sorted(project.glob("song_v*.mp3"))]:
-        if p.exists():
-            longest_song = max(longest_song, _probe_duration(p))
-    gap = longest_song - assembled
-    if gap > 3:                          # >3s of freeze-frame is the problem threshold
-        _log(project, f"⚠  song ({longest_song:.1f}s) is {gap:.1f}s LONGER "
-                      f"than assembled scenes ({assembled:.1f}s) — the tail "
-                      f"will freeze on the last frame for that duration.")
-        _log(project, f"   add ~{int(gap/12)+1} more scenes (at 12s each) or "
-                      f"extend existing durations up to 20s each, then rerun.")
-        sys.exit("aborting before scene generation — scene total too short for song.")
+    if (spec.get("video") or {}).get("model_profile"):
+        _profile_helper().check_audio(spec, project, "scenes", _profile_plan(spec, project), FFMPEG())
+    else:
+        assembled = sum(s["duration_sec"] for s in scenes)
+        longest_song = 0.0
+        for p in [project / "song.mp3", *sorted(project.glob("song_v*.mp3"))]:
+            if p.exists():
+                longest_song = max(longest_song, _probe_duration(p))
+        gap = longest_song - assembled
+        if gap > 3:                          # >3s of freeze-frame is the problem threshold
+            _log(project, f"⚠  song ({longest_song:.1f}s) is {gap:.1f}s LONGER "
+                          f"than assembled scenes ({assembled:.1f}s) — the tail "
+                          f"will freeze on the last frame for that duration.")
+            _log(project, f"   add ~{int(gap/12)+1} more scenes (at 12s each) or "
+                          f"extend existing durations up to 20s each, then rerun.")
+            sys.exit("aborting before scene generation — scene total too short for song.")
 
     # --- anchors pass (top-level + per-scene flux2) ---
     cmd_anchors(spec, project)
@@ -1746,7 +1800,8 @@ def cmd_all(spec: dict, project: Path, no_gate: bool = False) -> None:
     # Runs on COMFY_URL_FLUX so they parallelize with... well, here they run
     # serially after scenes, but `transitions` can also be invoked standalone
     # during the main batch on a second terminal.
-    cmd_transitions(spec, project)
+    if not (spec.get("video") or {}).get("model_profile"):
+        cmd_transitions(spec, project)
     cmd_assemble(spec, project)
 
 
@@ -1755,6 +1810,8 @@ def cmd_scenes(spec: dict, project: Path) -> None:
     Refuses to submit if ANY scene exceeds MAX_SCENE_DURATION — a too-long
     clip can OOM-kill the comfy server and wipe the whole queue, forcing
     everyone to re-submit."""
+    if (spec.get("video") or {}).get("model_profile"):
+        _profile_plan(spec, project)
     scenes = spec.get("scenes") or []
     if not scenes:
         sys.exit("spec has no scenes")

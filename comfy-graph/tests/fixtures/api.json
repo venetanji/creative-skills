@@ -1,0 +1,258 @@
+{
+  "provenance": {
+    "revision": "741bab9bb1da495e96949286695fccfd3ec931ff",
+    "clock": 1700000000.125,
+    "source_sha256": {
+      "core.py": "adc60e9e4450118a23e49d21683ef66703a2cc5a3e0b6d63452fa6cb444f8cda",
+      "flux2.py": "bb1067bd55e50c40e6f70309e6d0c8ca74be4f2affcf3c2fd72fcbf78396ed9b",
+      "tts.py": "52199be9ad85b49965cb0b28ea1b5de7904fa52f9f9927e1c0f7c272213afdf9",
+      "post.py": "98599aec072e6728698426a459bdba66ed36052f65074f36025928ce4cd77f95",
+      "ltx2.py": "ce5ac93c52f0a2af51af5283aff039c122c80d477c3c8955bf52785cea614455"
+    }
+  },
+  "builders": {
+    "flux2_text_to_image": {
+      "signature": "(prompt, width=1024, height=576, steps=8, filename_prefix='flux2_t2i', unet_name='flux-2-klein-9b-fp8.safetensors', vae_name='flux2-vae.safetensors', clip_name='qwen_3_8b_fp8mixed.safetensors', seed=None, lora=None, lora_strength=1.0)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='prompt'), arg(arg='width'), arg(arg='height'), arg(arg='steps'), arg(arg='filename_prefix'), arg(arg='unet_name'), arg(arg='vae_name'), arg(arg='clip_name'), arg(arg='seed'), arg(arg='lora'), arg(arg='lora_strength')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=1024), Constant(value=576), Constant(value=8), Constant(value='flux2_t2i'), Constant(value='flux-2-klein-9b-fp8.safetensors'), Constant(value='flux2-vae.safetensors'), Constant(value='qwen_3_8b_fp8mixed.safetensors'), Constant(value=None), Constant(value=None), Constant(value=1.0)])",
+      "returns_ast": null
+    },
+    "flux2_multi_reference_edit": {
+      "signature": "(image_filenames, prompt, width=1024, height=576, steps=8, filename_prefix='flux2_i2iN', unet_name='flux-2-klein-9b-fp8.safetensors', vae_name='flux2-vae.safetensors', clip_name='qwen_3_8b_fp8mixed.safetensors', seed=None, lora=None, lora_strength=1.0)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image_filenames'), arg(arg='prompt'), arg(arg='width'), arg(arg='height'), arg(arg='steps'), arg(arg='filename_prefix'), arg(arg='unet_name'), arg(arg='vae_name'), arg(arg='clip_name'), arg(arg='seed'), arg(arg='lora'), arg(arg='lora_strength')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=1024), Constant(value=576), Constant(value=8), Constant(value='flux2_i2iN'), Constant(value='flux-2-klein-9b-fp8.safetensors'), Constant(value='flux2-vae.safetensors'), Constant(value='qwen_3_8b_fp8mixed.safetensors'), Constant(value=None), Constant(value=None), Constant(value=1.0)])",
+      "returns_ast": null
+    },
+    "flux2_single_image_edit": {
+      "signature": "(image_filename, prompt, **kw)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image_filename'), arg(arg='prompt')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='kw'), defaults=[])",
+      "returns_ast": null
+    },
+    "flux2_double_image_edit": {
+      "signature": "(image1_filename, image2_filename, prompt, **kw)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image1_filename'), arg(arg='image2_filename'), arg(arg='prompt')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='kw'), defaults=[])",
+      "returns_ast": null
+    },
+    "flux2_multi_reference_edit_multiprompt": {
+      "signature": "(image_filenames, angle_prompts, prepend='', append='', width=1024, height=576, steps=8, filename_prefix='flux2_i2iN_multi', unet_name='flux-2-klein-9b-fp8.safetensors', vae_name='flux2-vae.safetensors', clip_name='qwen_3_8b_fp8mixed.safetensors', seed=None, lora=None, lora_strength=1.0)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image_filenames'), arg(arg='angle_prompts'), arg(arg='prepend'), arg(arg='append'), arg(arg='width'), arg(arg='height'), arg(arg='steps'), arg(arg='filename_prefix'), arg(arg='unet_name'), arg(arg='vae_name'), arg(arg='clip_name'), arg(arg='seed'), arg(arg='lora'), arg(arg='lora_strength')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value=1024), Constant(value=576), Constant(value=8), Constant(value='flux2_i2iN_multi'), Constant(value='flux-2-klein-9b-fp8.safetensors'), Constant(value='flux2-vae.safetensors'), Constant(value='qwen_3_8b_fp8mixed.safetensors'), Constant(value=None), Constant(value=None), Constant(value=1.0)])",
+      "returns_ast": null
+    },
+    "flux2_double_image_edit_multiprompt": {
+      "signature": "(image1_filename, image2_filename, angle_prompts, **kw)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image1_filename'), arg(arg='image2_filename'), arg(arg='angle_prompts')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='kw'), defaults=[])",
+      "returns_ast": null
+    },
+    "flux2_multiple_angles": {
+      "signature": "(image_filename, angle_prompts, prepend='', append='', filename_prefix='flux2_angles', unet_name='flux-2-klein-9b-fp8.safetensors', vae_name='flux2-vae.safetensors', clip_name='qwen_3_8b_fp8mixed.safetensors', steps=8, lora=None, lora_strength=1.0, seed=None)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image_filename'), arg(arg='angle_prompts'), arg(arg='prepend'), arg(arg='append'), arg(arg='filename_prefix'), arg(arg='unet_name'), arg(arg='vae_name'), arg(arg='clip_name'), arg(arg='steps'), arg(arg='lora'), arg(arg='lora_strength'), arg(arg='seed')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value='flux2_angles'), Constant(value='flux-2-klein-9b-fp8.safetensors'), Constant(value='flux2-vae.safetensors'), Constant(value='qwen_3_8b_fp8mixed.safetensors'), Constant(value=8), Constant(value=None), Constant(value=1.0), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "qwen_tts": {
+      "signature": "(text, voice_instruct='A clear, friendly voice.', language='Auto', filename_prefix='tts')",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='text'), arg(arg='voice_instruct'), arg(arg='language'), arg(arg='filename_prefix')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='A clear, friendly voice.'), Constant(value='Auto'), Constant(value='tts')])",
+      "returns_ast": null
+    },
+    "qwen_voice_clone": {
+      "signature": "(text, voice_name='gio', language='Auto', filename_prefix='clone')",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='text'), arg(arg='voice_name'), arg(arg='language'), arg(arg='filename_prefix')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='gio'), Constant(value='Auto'), Constant(value='clone')])",
+      "returns_ast": null
+    },
+    "extract_stems": {
+      "signature": "(audio_filename, model_name='MelBandRoformer_fp16.safetensors', filename_prefix='stems')",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='audio_filename'), arg(arg='model_name'), arg(arg='filename_prefix')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='MelBandRoformer_fp16.safetensors'), Constant(value='stems')])",
+      "returns_ast": null
+    },
+    "transcribe": {
+      "signature": "(audio_filename, model_size='large-v3-turbo', language='auto', filename_prefix='transcript')",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='audio_filename'), arg(arg='model_size'), arg(arg='language'), arg(arg='filename_prefix')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='large-v3-turbo'), Constant(value='auto'), Constant(value='transcript')])",
+      "returns_ast": null
+    },
+    "concat_videos_ffmpeg": {
+      "signature": "(staged_subfolder, audio_filename=None, filename_prefix='concat_ffmpeg')",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='staged_subfolder'), arg(arg='audio_filename'), arg(arg='filename_prefix')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None), Constant(value='concat_ffmpeg')])",
+      "returns_ast": null
+    },
+    "concat_videos": {
+      "signature": "(video_filenames, audio_filename=None, fps=24.0, trim_durations=None, trim_starts=None, filename_prefix='concat', format='mp4', codec='h264')",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='video_filenames'), arg(arg='audio_filename'), arg(arg='fps'), arg(arg='trim_durations'), arg(arg='trim_starts'), arg(arg='filename_prefix'), arg(arg='format'), arg(arg='codec')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None), Constant(value=24.0), Constant(value=None), Constant(value=None), Constant(value='concat'), Constant(value='mp4'), Constant(value='h264')])",
+      "returns_ast": null
+    },
+    "ltx2_text_to_video": {
+      "signature": "(prompt, seconds=5, fps=24, width=768, height=512, filename_prefix='ltx2_t2v', seed=None, negative=None, fast=False, camera_lora=None, camera_lora_strength=0.8, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='prompt'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='fast'), arg(arg='camera_lora'), arg(arg='camera_lora_strength'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=5), Constant(value=24), Constant(value=768), Constant(value=512), Constant(value='ltx2_t2v'), Constant(value=None), Constant(value=None), Constant(value=False), Constant(value=None), Constant(value=0.8), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "ltx2_ingredients_to_video": {
+      "signature": "(sheet_image, prompt, seconds=5, fps=24, width=768, height=448, filename_prefix='ltx2_ingredients', seed=None, negative=None, fast=False, lora_strength=1.4, reference_strength=1.0, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='sheet_image'), arg(arg='prompt'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='fast'), arg(arg='lora_strength'), arg(arg='reference_strength'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=5), Constant(value=24), Constant(value=768), Constant(value=448), Constant(value='ltx2_ingredients'), Constant(value=None), Constant(value=None), Constant(value=False), Constant(value=1.4), Constant(value=1.0), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "ltx2_image_to_video": {
+      "signature": "(image_filename, prompt, seconds=5, fps=24, width=768, height=512, filename_prefix='ltx2_i2v', seed=None, negative=None, fast=False, camera_lora=None, camera_lora_strength=0.8, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image_filename'), arg(arg='prompt'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='fast'), arg(arg='camera_lora'), arg(arg='camera_lora_strength'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=5), Constant(value=24), Constant(value=768), Constant(value=512), Constant(value='ltx2_i2v'), Constant(value=None), Constant(value=None), Constant(value=False), Constant(value=None), Constant(value=0.8), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "ltx2_image_audio_to_video": {
+      "signature": "(image_filename, audio_filename, prompt, seconds=5, fps=24, width=768, height=512, filename_prefix='ltx2_ia2v', seed=None, negative=None, fast=False, camera_lora=None, camera_lora_strength=0.8, image_refs=None, base_guide_strength=0.5, refine_guide_strength=0.3, identity_anchor_image=None, identity_strength=0.3, ic_loras=None, ic_lora_reference_filename=None, ic_lora_reference_strength=1.0, ic_lora_reference_size=None, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='image_filename'), arg(arg='audio_filename'), arg(arg='prompt'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='fast'), arg(arg='camera_lora'), arg(arg='camera_lora_strength'), arg(arg='image_refs'), arg(arg='base_guide_strength'), arg(arg='refine_guide_strength'), arg(arg='identity_anchor_image'), arg(arg='identity_strength'), arg(arg='ic_loras'), arg(arg='ic_lora_reference_filename'), arg(arg='ic_lora_reference_strength'), arg(arg='ic_lora_reference_size'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=5), Constant(value=24), Constant(value=768), Constant(value=512), Constant(value='ltx2_ia2v'), Constant(value=None), Constant(value=None), Constant(value=False), Constant(value=None), Constant(value=0.8), Constant(value=None), Constant(value=0.5), Constant(value=0.3), Constant(value=None), Constant(value=0.3), Constant(value=None), Constant(value=None), Constant(value=1.0), Constant(value=None), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "ltx2_first_last_frame_to_video": {
+      "signature": "(first_frame_filename, last_frame_filename, prompt, seconds=5, fps=24, width=768, height=512, filename_prefix='ltx2_flf2v', seed=None, negative=None, fast=False, first_guide_strength=None, last_guide_strength=None, guide_strength=0.7, audio_filename=None, use_transition_lora=False, transition_lora_strength=1.0, camera_lora=None, camera_lora_strength=0.8, ic_loras=None, ic_lora_reference_filename=None, ic_lora_reference_strength=1.0, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='first_frame_filename'), arg(arg='last_frame_filename'), arg(arg='prompt'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='fast'), arg(arg='first_guide_strength'), arg(arg='last_guide_strength'), arg(arg='guide_strength'), arg(arg='audio_filename'), arg(arg='use_transition_lora'), arg(arg='transition_lora_strength'), arg(arg='camera_lora'), arg(arg='camera_lora_strength'), arg(arg='ic_loras'), arg(arg='ic_lora_reference_filename'), arg(arg='ic_lora_reference_strength'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=5), Constant(value=24), Constant(value=768), Constant(value=512), Constant(value='ltx2_flf2v'), Constant(value=None), Constant(value=None), Constant(value=False), Constant(value=None), Constant(value=None), Constant(value=0.7), Constant(value=None), Constant(value=False), Constant(value=1.0), Constant(value=None), Constant(value=0.8), Constant(value=None), Constant(value=None), Constant(value=1.0), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "ltx2_multi_guide_to_video": {
+      "signature": "(guide_filenames, prompt, guide_frame_indices=None, guide_strengths=None, seconds=8.0, fps=24, width=768, height=512, filename_prefix='ltx2_multi_guide', seed=None, negative=None, fast=False, audio_filename=None, use_transition_lora=True, transition_lora_strength=1.0, camera_lora=None, camera_lora_strength=0.8, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='guide_filenames'), arg(arg='prompt'), arg(arg='guide_frame_indices'), arg(arg='guide_strengths'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='fast'), arg(arg='audio_filename'), arg(arg='use_transition_lora'), arg(arg='transition_lora_strength'), arg(arg='camera_lora'), arg(arg='camera_lora_strength'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=None), Constant(value=None), Constant(value=8.0), Constant(value=24), Constant(value=768), Constant(value=512), Constant(value='ltx2_multi_guide'), Constant(value=None), Constant(value=None), Constant(value=False), Constant(value=None), Constant(value=True), Constant(value=1.0), Constant(value=None), Constant(value=0.8), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "ltx2_transition": {
+      "signature": "(first_frame_filename, last_frame_filename, prompt, seconds=3.0, fps=24, width=720, height=1280, filename_prefix='ltx2_transition', seed=None, negative=None, first_guide_strength=1.0, last_guide_strength=1.0, audio_filename=None, prev_video_filename=None, next_video_filename=None, multiframe_guide=None, multiframe_guide_last=None, prev_video_start_frame=None, next_video_start_frame=None, prev_video_tail_buffer_sec=0.0, slice_song_start_sec=None, prev_video_song_start_sec=None, next_video_song_start_sec=None, next_video_vocal_offset_sec=0.0, mask_start_sec=None, mask_end_sec=None, mask_max_length='pad', use_mask=True, use_inplace=True, use_addguide=False, addguide_strength=0.6, fast=False, b_sparse_latent_positions=None, last_guide_index=None, camera_lora=None, camera_lora_strength=0.8, debug_save_audio=False, ic_loras=None, ic_lora_reference_filename=None, ic_lora_reference_strength=1.0, ic_lora_frame_idx=0, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='first_frame_filename'), arg(arg='last_frame_filename'), arg(arg='prompt'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='first_guide_strength'), arg(arg='last_guide_strength'), arg(arg='audio_filename'), arg(arg='prev_video_filename'), arg(arg='next_video_filename'), arg(arg='multiframe_guide'), arg(arg='multiframe_guide_last'), arg(arg='prev_video_start_frame'), arg(arg='next_video_start_frame'), arg(arg='prev_video_tail_buffer_sec'), arg(arg='slice_song_start_sec'), arg(arg='prev_video_song_start_sec'), arg(arg='next_video_song_start_sec'), arg(arg='next_video_vocal_offset_sec'), arg(arg='mask_start_sec'), arg(arg='mask_end_sec'), arg(arg='mask_max_length'), arg(arg='use_mask'), arg(arg='use_inplace'), arg(arg='use_addguide'), arg(arg='addguide_strength'), arg(arg='fast'), arg(arg='b_sparse_latent_positions'), arg(arg='last_guide_index'), arg(arg='camera_lora'), arg(arg='camera_lora_strength'), arg(arg='debug_save_audio'), arg(arg='ic_loras'), arg(arg='ic_lora_reference_filename'), arg(arg='ic_lora_reference_strength'), arg(arg='ic_lora_frame_idx'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=3.0), Constant(value=24), Constant(value=720), Constant(value=1280), Constant(value='ltx2_transition'), Constant(value=None), Constant(value=None), Constant(value=1.0), Constant(value=1.0), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=0.0), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=0.0), Constant(value=None), Constant(value=None), Constant(value='pad'), Constant(value=True), Constant(value=True), Constant(value=False), Constant(value=0.6), Constant(value=False), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=0.8), Constant(value=False), Constant(value=None), Constant(value=None), Constant(value=1.0), Constant(value=0), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    },
+    "extract_last_frame": {
+      "signature": "(video_server_path, filename_prefix='last_frame')",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='video_server_path'), arg(arg='filename_prefix')], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='last_frame')])",
+      "returns_ast": null
+    },
+    "ltx2_continuation_to_video": {
+      "signature": "(prev_video_filename, prev_total_frames, prompt, overlap_seconds=1.0, seconds=5, fps=24, width=768, height=512, filename_prefix='ltx2_continuation', seed=None, negative=None, fast=False, overlap_strength=1.0, audio_filename=None, identity_anchor_image=None, identity_strength=0.3, camera_lora=None, camera_lora_strength=0.8, checkpoint_name=None, text_encoder=None, **_)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='prev_video_filename'), arg(arg='prev_total_frames'), arg(arg='prompt'), arg(arg='overlap_seconds'), arg(arg='seconds'), arg(arg='fps'), arg(arg='width'), arg(arg='height'), arg(arg='filename_prefix'), arg(arg='seed'), arg(arg='negative'), arg(arg='fast'), arg(arg='overlap_strength'), arg(arg='audio_filename'), arg(arg='identity_anchor_image'), arg(arg='identity_strength'), arg(arg='camera_lora'), arg(arg='camera_lora_strength'), arg(arg='checkpoint_name'), arg(arg='text_encoder')], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='_'), defaults=[Constant(value=1.0), Constant(value=5), Constant(value=24), Constant(value=768), Constant(value=512), Constant(value='ltx2_continuation'), Constant(value=None), Constant(value=None), Constant(value=False), Constant(value=1.0), Constant(value=None), Constant(value=None), Constant(value=0.3), Constant(value=None), Constant(value=0.8), Constant(value=None), Constant(value=None)])",
+      "returns_ast": null
+    }
+  },
+  "exports": {
+    "flux2": [
+      "WorkflowGraph",
+      "upload_if_local",
+      "time",
+      "flux2_text_to_image",
+      "flux2_multi_reference_edit",
+      "flux2_single_image_edit",
+      "flux2_double_image_edit",
+      "flux2_multi_reference_edit_multiprompt",
+      "flux2_double_image_edit_multiprompt",
+      "flux2_multiple_angles"
+    ],
+    "tts": [
+      "WorkflowGraph",
+      "qwen_tts",
+      "qwen_voice_clone"
+    ],
+    "post": [
+      "Path",
+      "WorkflowGraph",
+      "extract_stems",
+      "transcribe",
+      "COMFY_INPUT_DIR",
+      "COMFY_OUTPUT_DIR",
+      "concat_videos_ffmpeg",
+      "stage_clips_for_concat",
+      "concat_videos"
+    ],
+    "ltx2": [
+      "WorkflowGraph",
+      "os",
+      "sys",
+      "time",
+      "CKPT",
+      "TEXT_ENCODER",
+      "UPSCALER",
+      "DISTILLED_LORA",
+      "INGREDIENTS_LORA",
+      "INGREDIENTS_NEG",
+      "NEG_DEFAULT",
+      "SIGMAS_PASS1",
+      "SIGMAS_PASS2",
+      "SAMPLER_PASS1",
+      "SAMPLER_PASS2",
+      "CAMERA_LORAS",
+      "ltx2_text_to_video",
+      "ltx2_ingredients_to_video",
+      "ltx2_image_to_video",
+      "ltx2_image_audio_to_video",
+      "TRANSITION_LORA",
+      "TRANSITION_TRIGGER",
+      "ltx2_first_last_frame_to_video",
+      "ltx2_multi_guide_to_video",
+      "ltx2_transition",
+      "extract_last_frame",
+      "ltx2_continuation_to_video"
+    ]
+  },
+  "constants": {
+    "flux2": {},
+    "tts": {},
+    "post": {
+      "COMFY_INPUT_DIR": "/app/ComfyUI/input",
+      "COMFY_OUTPUT_DIR": "/app/ComfyUI/output"
+    },
+    "ltx2": {
+      "CKPT": "ltx-2.3-22b-dev-fp8.safetensors",
+      "TEXT_ENCODER": "gemma_3_12B_it_fp8_e4m3fn.safetensors",
+      "UPSCALER": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+      "DISTILLED_LORA": "ltx-2.3-22b-distilled-lora-384.safetensors",
+      "INGREDIENTS_LORA": "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
+      "INGREDIENTS_NEG": "pc game, console game, video game, cartoon, childish, ugly, worst quality, inconsistent motion, blurry, jittery, distorted",
+      "NEG_DEFAULT": "pc game, console game, video game, cartoon, childish, ugly, blurry, low quality, watermark, distorted, still frame, text, captions, subtitles, signs, logos, lettering, typography, words, letters",
+      "SIGMAS_PASS1": "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
+      "SIGMAS_PASS2": "0.85, 0.7250, 0.4219, 0.0",
+      "SAMPLER_PASS1": "euler_ancestral_cfg_pp",
+      "SAMPLER_PASS2": "euler_cfg_pp",
+      "CAMERA_LORAS": {
+        "dolly-in": "ltx-2-19b-lora-camera-control-dolly-in.safetensors",
+        "dolly-out": "ltx-2-19b-lora-camera-control-dolly-out.safetensors",
+        "dolly-left": "ltx-2-19b-lora-camera-control-dolly-left.safetensors",
+        "dolly-right": "ltx-2-19b-lora-camera-control-dolly-right.safetensors",
+        "jib-up": "ltx-2-19b-lora-camera-control-jib-up.safetensors",
+        "jib-down": "ltx-2-19b-lora-camera-control-jib-down.safetensors",
+        "static": "ltx-2-19b-lora-camera-control-static.safetensors"
+      },
+      "TRANSITION_LORA": "ltx2.3-transition.safetensors",
+      "TRANSITION_TRIGGER": "zhuanchang"
+    }
+  },
+  "primitives": {
+    "NodeRef": {
+      "signature": "(node_id: 'str', output_idx: 'int' = 0)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='node_id', annotation=Name(id='str', ctx=Load())), arg(arg='output_idx', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=0)])",
+      "returns_ast": null
+    },
+    "NodeRef.__getitem__": {
+      "signature": "(self, idx: 'int') -> \"'NodeRef'\"",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='idx', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns_ast": "Constant(value='NodeRef')"
+    },
+    "NodeRef.as_link": {
+      "signature": "(self) -> 'list'",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns_ast": "Name(id='list', ctx=Load())"
+    },
+    "NodeRef.__repr__": {
+      "signature": "(self)",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns_ast": null
+    },
+    "WorkflowGraph": {
+      "signature": "()",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns_ast": null
+    },
+    "WorkflowGraph.node": {
+      "signature": "(self, class_type: 'str', **inputs) -> 'NodeRef'",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='class_type', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], kwarg=arg(arg='inputs'), defaults=[])",
+      "returns_ast": "Name(id='NodeRef', ctx=Load())"
+    },
+    "WorkflowGraph.to_dict": {
+      "signature": "(self) -> 'dict'",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns_ast": "Name(id='dict', ctx=Load())"
+    },
+    "WorkflowGraph.to_json": {
+      "signature": "(self, indent: 'int' = 2) -> 'str'",
+      "arguments_ast": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='indent', annotation=Name(id='int', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=2)])",
+      "returns_ast": "Name(id='str', ctx=Load())"
+    }
+  }
+}

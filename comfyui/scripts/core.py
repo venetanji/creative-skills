@@ -25,47 +25,18 @@ VOICE_LIBRARY = {
 }
 
 
-class NodeRef:
-    def __init__(self, node_id: str, output_idx: int = 0):
-        self.node_id = node_id
-        self.output_idx = output_idx
-
-    def __getitem__(self, idx: int) -> "NodeRef":
-        return NodeRef(self.node_id, idx)
-
-    def as_link(self) -> list:
-        return [self.node_id, self.output_idx]
-
-    def __repr__(self):
-        return f"NodeRef({self.node_id!r}, {self.output_idx})"
-
-
-class WorkflowGraph:
-    def __init__(self):
-        self._nodes: dict[str, dict] = {}
-        self._counter = 0
-
-    def node(self, class_type: str, **inputs) -> NodeRef:
-        node_id = str(self._counter)
-        self._counter += 1
-        processed = {}
-        for k, v in inputs.items():
-            if isinstance(v, NodeRef):
-                processed[k] = v.as_link()
-            else:
-                processed[k] = v
-        self._nodes[node_id] = {"class_type": class_type, "inputs": processed}
-        return NodeRef(node_id)
-
-    def to_dict(self) -> dict:
-        return dict(self._nodes)
-
-    def to_json(self, indent: int = 2) -> str:
-        return json.dumps(self.to_dict(), indent=indent)
+try:
+    from creative_comfy_graph import NodeRef, WorkflowGraph
+except ModuleNotFoundError as exc:
+    if exc.name != "creative_comfy_graph":
+        raise
+    raise ImportError(
+        "creative-comfy-graph is required; install it into the Python environment running this script."
+    ) from exc
 
 
 def upload_image(local_path: str, subfolder: str = "",
-                  upload_as: str | None = None) -> str:
+                  upload_as: str | None = None, *, strict_input: bool = False) -> str:
     """Upload a local file into ComfyUI's input/ dir, optionally under a
     subfolder and/or with a different remote name. Returns the server-side
     name (relative to input/).
@@ -95,6 +66,10 @@ def upload_image(local_path: str, subfolder: str = "",
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST")
     with urllib.request.urlopen(req, timeout=30) as r:
         resp = json.load(r)
+    if strict_input and (not isinstance(resp, dict) or
+                         resp.get("type") != "input" or
+                         resp.get("subfolder") != subfolder):
+        raise ValueError("upload response must identify the requested input storage location")
     return resp["name"]
 
 
@@ -116,7 +91,7 @@ def upload_if_local(path: str, upload_flag: bool = True) -> str:
     return path
 
 
-def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notify: str | None = None, caption_template: str | None = None, user_prompt: str | None = None):
+def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notify: str | None = None, caption_template: str | None = None, user_prompt: str | None = None, *, require_output: bool = False):
     # Inside an OpenClaw sandbox, the default --output-dir (./outputs/) lands
     # in /home/sandbox which is ephemeral and not visible host-side. Redirect
     # to a workspace-mounted dir so downloads survive the session and the
@@ -131,70 +106,80 @@ def _submit_and_wait(workflow: dict, output_dir: Path, timeout: int = 600, notif
         output_dir = Path(sandbox_media_dir)
     elif Path.home() == Path("/home/sandbox"):
         output_dir = Path("/workspace/media/outbound")
-    def _retrying(url, *, data=None, method="GET", max_transient=30):
-        """GET/POST with retry on transient HTTP 5xx / connection errors.
-        Returns parsed JSON on success. Raises on persistent failure."""
-        headers = {"Content-Type": "application/json"} if data else {}
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    # Graph-only imports/help/dump do not need the transport-only sibling.
+    from queue_admission import wait_for_empty_queue
+
+    deadline = time.monotonic() + timeout
+    prompt_id = None
+
+    def remaining():
+        seconds = deadline - time.monotonic()
+        if seconds <= 0:
+            if prompt_id is None:
+                raise TimeoutError(f"Timed out before submission after {timeout}s; NO_POST; prompt_id=None")
+            raise TimeoutError(f"Timed out after {timeout}s; prompt_id={prompt_id}; do not resubmit")
+        return seconds
+
+    def request_json(url, *, data=None):
+        # Only read-only history requests may retry. A failed POST response can
+        # hide an accepted job; retrying would create an untracked duplicate.
+        method = "POST" if data is not None else "GET"
+        req = urllib.request.Request(url, data=data, method=method,
+            headers={"Content-Type": "application/json"} if data is not None else {})
         transient = 0
+        if method == "POST":
+            # The sole POST here is /prompt; finish request preparation first.
+            wait_for_empty_queue(BASE, deadline)
         while True:
+            request_timeout = min(15, remaining())
             try:
-                with urllib.request.urlopen(req, timeout=15) as r:
-                    return json.load(r)
-            except urllib.error.HTTPError as e:
-                # A 400 from /prompt is a rejected graph or input and will
-                # not become valid by submitting the same workflow again.
-                if 500 <= e.code < 600 and transient < max_transient:
-                    transient += 1
-                    wait = min(20, 2 * transient)
-                    print(f"[transient HTTP {e.code}] {url}; retry {transient}/{max_transient} in {wait}s",
-                          file=sys.stderr)
-                    time.sleep(wait)
-                    continue
-                raise
-            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-                if transient < max_transient:
-                    transient += 1
-                    wait = min(20, 2 * transient)
-                    print(f"[transient {type(e).__name__}] {url}; retry {transient}/{max_transient} in {wait}s",
-                          file=sys.stderr)
-                    time.sleep(wait)
-                    continue
-                raise
+                with urllib.request.urlopen(req, timeout=request_timeout) as response:
+                    return json.load(response)
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode('utf-8', errors='replace')
+                if method == "POST" or not 500 <= exc.code < 600:
+                    raise RuntimeError(f"{method} {url}: HTTP {exc.code}: {body}; no resubmission") from exc
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+                if method == "POST":
+                    raise RuntimeError(f"Ambiguous prompt submission: {exc}; do not resubmit; inspect backend queue/history") from exc
+                remaining()
+            except (ValueError, UnicodeError) as exc:
+                raise RuntimeError(f"Invalid {method} response from {url}; submission may be ambiguous; do not resubmit") from exc
+            transient += 1
+            time.sleep(min(20, 2 * transient, remaining()))
 
     payload = json.dumps({"prompt": workflow}).encode()
-    result = _retrying(f"{BASE}/prompt", data=payload, method="POST")
-    if result.get("node_errors"):
-        print(f"[WARN] Node errors: {result['node_errors']}", file=sys.stderr)
+    result = request_json(f"{BASE}/prompt", data=payload)
+    if not isinstance(result, dict) or result.get("node_errors") or not result.get("prompt_id"):
+        raise RuntimeError(f"Prompt rejected or ambiguous response: {json.dumps(result)}; no resubmission")
     prompt_id = result["prompt_id"]
     print(f"prompt_id: {prompt_id}", file=sys.stderr)
-
-    deadline = time.time() + timeout
     last_st = None
-    while time.time() < deadline:
-        hist = _retrying(f"{BASE}/history/{prompt_id}")
+    while True:
+        remaining()
+        hist = request_json(f"{BASE}/history/{prompt_id}")
         entry = hist.get(prompt_id)
         if entry:
-            outputs = entry.get("outputs", {})
-            st = (entry.get("status") or {}).get("status_str") or (entry.get("status") or {}).get("status")
+            status = entry.get("status") or {}
+            st = status.get("status_str") or status.get("status")
             if st and st != last_st:
                 print(f"[{st}]", file=sys.stderr)
                 last_st = st
-            if st == "error":
-                errors = [message[1] for message in entry.get("status", {}).get("messages", [])
-                          if len(message) >= 2 and message[0] == "execution_error"]
-                raise RuntimeError(f"ComfyUI execution failed for {prompt_id}: {errors or entry['status']}")
-            if outputs:
-                _save_assets(entry, output_dir, notify=notify, caption_template=caption_template, user_prompt=user_prompt)
+            events = [m[0] for m in status.get("messages", []) if isinstance(m, (list, tuple)) and m]
+            if st in {"error", "interrupted"} or any(e in {"execution_error", "execution_interrupted"} for e in events):
+                raise RuntimeError(f"Prompt {prompt_id} failed: {json.dumps(status)}")
+            if status.get("completed") is True:
+                if st != "success":
+                    raise RuntimeError(f"Prompt {prompt_id} completed without success: {json.dumps(status)}")
+                saved = _save_assets(entry, output_dir, notify=notify, caption_template=caption_template,
+                                     user_prompt=user_prompt, strict=require_output)
+                if require_output and not saved:
+                    raise RuntimeError(f"Prompt {prompt_id} succeeded without a downloadable output asset")
                 return prompt_id
-            if (entry.get("status") or {}).get("completed") is True or st == "error":
-                print("Completed with no outputs.", file=sys.stderr)
-                return prompt_id
-        time.sleep(2)
-    raise TimeoutError(f"Timed out after {timeout}s")
+        time.sleep(min(2, remaining()))
 
 
-def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, caption_template: str | None = None, user_prompt: str | None = None):
+def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, caption_template: str | None = None, user_prompt: str | None = None, *, strict: bool = False):
     output_dir.mkdir(parents=True, exist_ok=True)
     seen = set()
     saved_files = []
@@ -207,9 +192,7 @@ def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, capti
         for v in asset_values:
             if isinstance(v, list):
                 for item in v:
-                    if isinstance(item, dict) and "filename" in item:
-                        if item.get("type") == "input":
-                            continue
+                    if isinstance(item, dict) and "filename" in item and item.get("type") == "output":
                         fname = item["filename"]
                         if fname in seen:
                             continue
@@ -226,6 +209,8 @@ def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, capti
                             with urllib.request.urlopen(url, timeout=120) as r:
                                 dest.write_bytes(r.read())
                         except Exception as e:
+                            if strict:
+                                raise RuntimeError(f"Failed to download output {fname}: {e}") from e
                             print(f"[WARN] Failed to download asset {fname}: {e}", file=sys.stderr)
                             continue
                         print(f"saved: {dest}")
@@ -288,3 +273,5 @@ def _save_assets(entry: dict, output_dir: Path, notify: str | None = None, capti
                 parts.append(timestamp)
                 caption = " | ".join(parts)
             print(f"[NOTIFY_URL {i}] target={notify} media={url} caption={caption}")
+
+    return saved_files

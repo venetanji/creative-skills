@@ -3,6 +3,11 @@ name: drama-video
 description: Build a dialogue-first narrative video. Use when the user wants a "scene", "drama", "monologue", "dramatic clip", or a character acting through lines (not a music video). Spec authors the character, an ElevenLabs audio bed (dialogue + ambience + pauses) and a shot list whose start/duration aligns to the dialogue cues, then this skill renders flux anchors → LTX ia2v shots → vconcat + overlay full audio. Sibling to `music-video` (which is song-first and bar-aligned).
 ---
 
+For the opt-in `video.model_profile` route, read [PROFILED-VIDEO.md](PROFILED-VIDEO.md).
+It uses exact retained frame spans and full-master audio; legacy options are not
+automatically compatible, and no global LTX-2.5 default is promoted.
+
+
 # drama-video
 
 A narrative-first sibling to `music-video`. The primary axis is

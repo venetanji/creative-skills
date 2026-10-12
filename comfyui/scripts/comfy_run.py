@@ -10,7 +10,7 @@ Usage:
 Options:
  --output-dir DIR   Save generated files to DIR (default: ./outputs)
  --no-wait          Queue only, don't poll for result (prints prompt_id)
- --timeout N       Max seconds to wait (default: 600)
+ --timeout N        Queue admission budget, then separate history budget (default: 600)
  --url URL          Override COMFY_URL env var
 
 Output: prints asset URLs and saves files to --output-dir.
@@ -23,8 +23,11 @@ import os
 import sys
 import time
 import urllib.request
+import urllib.error
 import urllib.parse
 from pathlib import Path
+
+from queue_admission import wait_for_empty_queue
 
 BASE = os.environ.get("COMFY_URL", "http://localhost:8188").rstrip("/")
 
@@ -44,8 +47,27 @@ def get(path):
         return json.load(r)
 
 
-def queue_workflow(workflow):
-    result = post_json("/prompt", {"prompt": workflow})
+def queue_workflow(workflow, *, timeout=600):
+    # Prepare before admission: no serialization or other I/O after the final GET.
+    deadline = time.monotonic() + timeout
+    data = json.dumps({"prompt": workflow}).encode()
+    req = urllib.request.Request(
+        f"{BASE}/prompt", data=data,
+        headers={"Content-Type": "application/json"}, method="POST")
+    wait_for_empty_queue(BASE, deadline)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('Queue admission timed out; NO_POST; prompt_id=None')
+    try:
+        with urllib.request.urlopen(req, timeout=min(15, remaining)) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode('utf-8', errors='replace')
+        raise RuntimeError(f'POST {BASE}/prompt: HTTP {exc.code}: {body}; no resubmission') from exc
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, ValueError, UnicodeError) as exc:
+        raise RuntimeError(f'Ambiguous prompt submission: {exc}; do not resubmit; inspect backend queue/history') from exc
+    if not isinstance(result, dict) or not result.get("prompt_id"):
+        raise RuntimeError(f'Prompt rejected or ambiguous response: {result}; no resubmission')
     if result.get("node_errors"):
         print(f"[WARN] Node errors: {result['node_errors']}", file=sys.stderr)
     return result["prompt_id"]
@@ -69,7 +91,7 @@ def poll_result(prompt_id, timeout=600):
             if status.get("completed") is True or status_str in ("error", "success"):
                 return entry
         time.sleep(2)
-    raise TimeoutError(f"Workflow {prompt_id} did not complete within {timeout}s")
+    raise TimeoutError(f"Workflow did not complete within {timeout}s; prompt_id={prompt_id}; do not resubmit")
 
 
 def extract_assets(entry):
@@ -104,7 +126,7 @@ def download(asset, output_dir):
 def run_workflow(workflow, output_dir="outputs", no_wait=False, timeout=600):
     """Submit workflow, optionally wait, download assets. Returns (prompt_id, assets, saved_paths)."""
     print(f"Submitting workflow...", file=sys.stderr)
-    prompt_id = queue_workflow(workflow)
+    prompt_id = queue_workflow(workflow, timeout=timeout)
     print(f"prompt_id: {prompt_id}", file=sys.stderr)
     if no_wait:
         return prompt_id, [], []

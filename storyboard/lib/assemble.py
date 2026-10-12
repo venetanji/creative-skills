@@ -122,3 +122,84 @@ def assemble_clips(clips, audio_file, output, work_dir, ffmpeg):
                        "-shortest", str(output)],
                       capture_output=True).returncode != 0:
         raise RuntimeError("ffmpeg audio mux failed")
+
+
+def assemble_frame_spans(clips, audio_file, output, *, fps, width, height,
+                         ffmpeg='ffmpeg', ffprobe='ffprobe'):
+    """Assemble half-open integer frame spans with one continuous master audio.
+
+    Inputs must already share the requested CFR and geometry. Reject rather
+    than silently duplicate/drop/scale frames. Audio is decoded to check sample
+    coverage, then trimmed exactly to the video timeline (no -shortest).
+    Return verified timeline metadata; replace output only after full decode.
+    """
+    import json
+    import tempfile
+    from fractions import Fraction
+
+    def run(args):
+        return subprocess.run(args, check=True, capture_output=True).stdout
+
+    def probe(path):
+        return json.loads(run([ffprobe, '-v', 'error', '-select_streams', 'v:0',
+            '-show_streams', '-show_frames', '-show_entries',
+            'stream=width,height,avg_frame_rate:frame=best_effort_timestamp_time',
+            '-of', 'json', str(path)]))
+
+    def check_video(path, count=None):
+        data = probe(path)
+        stream = data['streams'][0]
+        if (stream['width'], stream['height']) != (width, height) or Fraction(stream['avg_frame_rate']) != fps:
+            raise ValueError(f'input must be {width}x{height} at {fps} fps: {path}')
+        stamps = [float(f['best_effort_timestamp_time']) for f in data['frames']]
+        if not stamps or any(abs((b-a)-1/fps) > 2e-6 for a,b in zip(stamps,stamps[1:])):
+            raise ValueError(f'nonuniform frame timestamps: {path}')
+        if count is not None and len(stamps) != count:
+            raise RuntimeError(f'expected {count} decoded frames, got {len(stamps)}')
+        return len(stamps)
+
+    if not clips or any(isinstance(x, bool) or not isinstance(x, int) or x <= 0 for x in (fps,width,height)):
+        raise ValueError('nonempty clips and positive integer fps/dimensions required')
+    total = 0
+    args = [ffmpeg, '-y', '-v', 'error']
+    filters = []
+    for i, (src, start, end) in enumerate(clips):
+        count = check_video(src)
+        if any(isinstance(x,bool) or not isinstance(x,int) for x in (start,end)) or not 0 <= start < end <= count:
+            raise ValueError(f'invalid frame span [{start},{end}) for {count} frames')
+        total += end-start
+        args += ['-i',str(src)]
+        filters.append(f'[{i}:v:0]trim=start_frame={start}:end_frame={end},settb=1/{fps},setpts=N,setsar=1[v{i}]')
+    samples = total*48000//fps
+    if total*48000 % fps:
+        raise ValueError('timeline does not map to integer 48k audio samples')
+    if audio_file is not None:
+        pcm = run([ffmpeg,'-v','error','-i',str(audio_file),'-map','0:a:0','-vn','-ac','1','-ar','48000','-f','s16le','-'])
+        if len(pcm)//2 < samples:
+            raise ValueError(f'master audio too short: need {samples} samples, got {len(pcm)//2}')
+        args += ['-i',str(audio_file)]
+    filters.append(''.join(f'[v{i}]' for i in range(len(clips)))+f'concat=n={len(clips)}:v=1:a=0,settb=1/{fps},setpts=N[v]')
+    if audio_file is not None:
+        filters.append(f'[{len(clips)}:a:0]aresample=48000,atrim=start_sample=0:end_sample={samples},asetpts=N/SR/TB[a]')
+    args += ['-filter_complex',';'.join(filters),'-map','[v]','-c:v','libx264',
+             '-preset','veryfast','-crf','18','-pix_fmt','yuv420p','-r',str(fps),'-fps_mode','cfr',
+             '-video_track_timescale',str(fps*1000)]
+    if audio_file is not None:
+        args += ['-map','[a]','-c:a','aac','-b:a','192k']
+    output = Path(output)
+    output.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='frame-assembly-',dir=output.parent) as tmp:
+        candidate = Path(tmp)/'result.mp4'
+        run(args+['-movflags','+faststart',str(candidate)])
+        check_video(candidate,total)
+        run([ffmpeg,'-v','error','-xerror','-i',str(candidate),'-f','null','-'])
+        if audio_file is not None:
+            pcm = run([ffmpeg, '-v', 'error', '-xerror', '-i', str(candidate),
+                       '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '48000', '-f', 's16le', '-'])
+            actual_samples = len(pcm)//2
+            if actual_samples != samples:
+                raise ValueError(f'decoded final audio has {actual_samples} samples, expected {samples}; '
+                                 'use a sample-exact ffmpeg build; destination was not replaced')
+        candidate.replace(output)
+    return dict(frames=total,fps=fps,width=width,height=height,
+                audio_samples=samples if audio_file is not None else None)

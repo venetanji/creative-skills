@@ -20,6 +20,14 @@ Five composable [AgentSkills](https://agentskills.ai/) that build on each other 
 
 ## The skills
 
+### [`comfy-graph/`](comfy-graph/) - canonical graph library
+
+`creative_comfy_graph` is the dependency-free source of ComfyUI graph recipes;
+the `comfyui/scripts/` entrypoints are transport/admission adapters. It includes
+the legacy graph families, explicit LTX-2.3/LTX-2.5 profiles with supplied audio,
+and native H3 T2V/I2V/R2V/IA2V. See [recovery provenance](comfy-graph/RECOVERY.md),
+[LTX profiles](comfy-graph/LTX-PROFILES.md), and [H3 profiles](comfy-graph/H3-PROFILE.md).
+
 ### [`comfyui/`](comfyui/) — direct ComfyUI REST access
 
 A thin Python wrapper that submits ComfyUI workflows by name and downloads the outputs. Everything goes through one CLI:
@@ -32,6 +40,7 @@ python3 scripts/comfy_graph.py multiprompt --image a.png --prompts "angle1\nangl
 python3 scripts/comfy_graph.py t2v   --prompt "..."  --seconds 10        # LTX-2.3 text-to-video
 python3 scripts/comfy_graph.py i2v   --image ref.png --prompt "..."      # LTX-2.3 image-to-video
 python3 scripts/comfy_graph.py ia2v  --image ref.png --audio a.mp3 ...   # LTX-2.3 audio-reactive video
+python3 scripts/comfy_graph.py h3-ia2v --image ref.png --audio a.mp3 --prompt 'A person sings' --frames 124
 python3 scripts/comfy_graph.py sam3d --video person.mp4 --seconds 5    # animated human GLB + mesh-overlay MP4
 python3 scripts/comfy_graph.py flf2v --first a.png --last b.png ...      # LTX-2.3 first-last-frame (default fps=25)
 python3 scripts/comfy_graph.py continuation  --prev_video prev.mp4 \
@@ -144,6 +153,17 @@ full table.
 
 ## Install
 
+Provision the standalone graph package into the interpreter used by your bot
+or CLI before copying skills. From this repository root:
+
+```sh
+python3 -m pip install ./comfy-graph
+```
+
+Python 3.11+ is required for the graph package. H3 image admission also needs
+Pillow (`comfyui/requirements-h3.txt`); supplied-audio admission needs local
+`ffmpeg` and `ffprobe`. Copy the whole `comfyui/` skill, including its helpers.
+
 These are AgentSkill directories. Drop them wherever your runtime expects skills:
 
 ```bash
@@ -161,7 +181,7 @@ Or use the scripts directly — they all have shebangs (`#!/usr/bin/env python3`
 - **ComfyUI** reachable at `COMFY_URL` (default `http://localhost:8188`), with at minimum: Flux2, LTX-2.3 dev-fp8 + distilled LoRA + spatial upscaler, Qwen3 TTS. The LTX camera-control LoRAs are optional but recommended.
 - **suno-mcp** reachable as an MCP server, invoked via `mcporter` configured in `~/.openclaw/config/mcporter.json`.
 - **uv** for the PEP 723 scripts (`video_join.py`, `music_video.py`, `frame_check.py`, `vram_monitor.py`). `apt install uv` / `brew install uv` / `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-- Standard Python 3.10+. No other host-level deps — uv pulls `pyyaml`, `imageio-ffmpeg`, `Pillow`, `numpy` into ephemeral envs on first run.
+- Python 3.11+ with `creative-comfy-graph` explicitly installed; H3 image/audio admission also needs Pillow and ffmpeg/ffprobe. Other skill scripts use uv-managed dependencies where declared.
 
 ### ComfyUI server URL
 

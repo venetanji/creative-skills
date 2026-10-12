@@ -1,0 +1,2 @@
+# Only the image-bearing H3 CLI; the pure graph distribution has no dependencies.
+Pillow>=10

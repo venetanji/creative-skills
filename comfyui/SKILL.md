@@ -15,6 +15,80 @@ description: >
 
 Direct ComfyUI REST API access for image and video generation.
 
+## Python dependency provisioning
+
+The scripts require Python >=3.11 and the local `creative-comfy-graph` 0.1.0
+package. It contains graph primitives plus the existing Flux2, TTS, graph-only
+post and LTX-2.3 builders; uploads, transport, CLI orchestration and local clip
+staging remain here. The library uses only the Python standard library.
+Install it explicitly into the interpreter that executes the scripts; imports
+never auto-install dependencies or search sibling/installed skill copies.
+For checkout development (uv and Python 3.11 or 3.12 required):
+
+```sh
+ROOT=/path/to/creative-skills
+ENV=/tmp/comfy-env
+uv venv --python 3.11 "$ENV"
+uv pip install --python "$ENV/bin/python" --link-mode=copy -e "$ROOT/comfy-graph"
+```
+
+Editable installs need the checkout to remain available. For copied skills,
+create the environment as above, copy the tracked skill scripts together and
+build/install the local wheel instead (no package source copy required):
+
+```sh
+DIST=/tmp/comfy-dist
+SCRIPTS=/path/to/copied/comfyui/scripts
+uv build "$ROOT/comfy-graph" --out-dir "$DIST"
+uv pip install --python "$ENV/bin/python" --link-mode=copy --no-deps \
+  "$DIST/creative_comfy_graph-0.1.0-py3-none-any.whl"
+export PATH="$ENV/bin:$PATH"
+python3 -c 'import creative_comfy_graph as p; print(p.__version__, p.__file__)'
+python3 "$SCRIPTS/comfy_graph.py"
+```
+
+The no-argument CLI prints usage and exits 1, which is expected. Missing package
+installation fails before transport work with `creative-comfy-graph is required;
+install it into the Python environment running this script.` Copy mode is scoped
+to each install, avoiding cross-filesystem cache hardlink fallback without global
+configuration. Keep that PATH in the parent and inherit it into every bare
+`python3` child, including children of a uv parent:
+
+```sh
+uv run --no-project --python "$ENV/bin/python" python -c \
+  'import subprocess; subprocess.run(["python3", "-c", "import creative_comfy_graph as p; print(p.__file__)"], check=True)'
+```
+
+Interpreter selection or a shebang alone does not fix child environments. Do not
+use PYTHONPATH or rely on installed-skill fallback. This local package is not yet
+a published immutable dependency pin. `comfy-graph/README.md` documents the
+all-family wheel/sdist-rebuild acceptance on actual Python 3.11/3.12, including
+copied-script startup, plain-Python child routing and missing-package checks.
+Those offline gates do not claim live GPU/model validation, LTX-2.5 support,
+consumer migration or deployment. Existing clock/seed/environment and audio/crop
+behavior is preserved, not corrected. Arbitrary legacy help/dump paths are not
+guaranteed side-effect-free; only guarded test fixtures are exercised offline.
+
+## Native H3 And Queue Admission
+
+Canonical graph code lives in this repository's `comfy-graph/`; install it into
+the bot's interpreter before using these adapters. `h3-t2v`, `h3-i2v`, and
+`h3-r2v` retain their native generated-audio recipes. `h3-ia2v --image LOCAL.png
+--audio LOCAL.mp3 --prompt '...' --frames 124` adds FL8 first-frame/audio
+conditioning and preserves the normalized source soundtrack. It requires
+Pillow and ffmpeg/ffprobe; audio must cover `frames/24` seconds and be at most
+32 MiB. All files/options validate before any upload. `dump h3-ia2v` is local
+only; audio support is graph-contract-tested, not live lip-sync evidence.
+Read `references/minimax-h3-prompt-guide.md` before authoring actual prompts;
+short CLI examples are transport fixtures, not model-specific prompt guidance.
+Exact recipes/evidence are in the canonical repository's `comfy-graph/H3-PROFILE.md`.
+
+Both `core.py` and standalone `comfy_run.py` require a fresh, empty, well-formed
+backend queue before POST. Busy queues wait within the deadline; malformed
+queue responses fail closed. POSTs are never automatically retried. Include
+`queue_admission.py`, `h3.py`, and `audio_input.py` when copying skill adapters.
+Queue inspection is cooperative admission, not an exclusive server lock.
+
 ## Server URL configuration
 
 The scripts read three environment variables, in priority order:
@@ -22,7 +96,7 @@ The scripts read three environment variables, in priority order:
 | Var | Used by | Falls back to |
 |---|---|---|
 | `COMFY_URL_FLUX`  | image / TTS / audio commands (`t2i`, `i2i`, `tts`, `stems`, `stt`, `vconcat`, `last_frame`) | `COMFY_URL` |
-| `COMFY_URL_VIDEO` | LTX video and SAM 3D Body commands (`t2v`, `i2v`, `ia2v`, `ingredients`, `flf2v`, `multiguide`, `transition`, `continuation`, `sam3d`) | `COMFY_URL` |
+| `COMFY_URL_VIDEO` | LTX, native H3 and SAM 3D Body (`t2v`, `i2v`, `ia2v`, `ingredients`, `flf2v`, `multiguide`, `transition`, `continuation`, `h3-t2v`, `h3-i2v`, `h3-r2v`, `h3-ia2v`, `sam3d`) | `COMFY_URL` |
 | `COMFY_URL`       | single-server fallback for everything | `http://localhost:8188` |
 
 **Defaults**: a fresh clone with no env vars set assumes a ComfyUI server at `http://localhost:8188` — the standard port when you start ComfyUI manually (`python main.py`) or via Docker.

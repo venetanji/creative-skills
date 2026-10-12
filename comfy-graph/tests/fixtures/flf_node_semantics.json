@@ -1,0 +1,16 @@
+{
+  "range": {
+    "path": "/home/venetanji/dev/ComfyUI/custom_nodes/comfyui-kjnodes/nodes/image_nodes.py",
+    "source_file_sha256": "a91d246e9b01c1983b854f6bd3f133f2eebc3414e316df062c8c6e6e9833671d",
+    "line": 1802,
+    "source": "def imagesfrombatch(self, start_index, num_frames, images=None, masks=None):\n        chosen_images = None\n        chosen_masks = None\n\n        # Process images if provided\n        if images is not None:\n            if start_index == -1:\n                start_index = max(0, len(images) - num_frames)\n            if start_index < 0 or start_index >= len(images):\n                raise ValueError(\"Start index is out of range\")\n            end_index = min(start_index + num_frames, len(images))\n            chosen_images = images[start_index:end_index]\n\n        # Process masks if provided\n        if masks is not None:\n            if start_index == -1:\n                start_index = max(0, len(masks) - num_frames)\n            if start_index < 0 or start_index >= len(masks):\n                raise ValueError(\"Start index is out of range for masks\")\n            end_index = min(start_index + num_frames, len(masks))\n            chosen_masks = masks[start_index:end_index]\n\n        return (chosen_images, chosen_masks,)\n",
+    "source_sha256": "7872b78b0fbd3cb9a979be2d9bb463ebbe58edf688c75b97d80bf7f609c9e3d6"
+  },
+  "index": {
+    "path": "/home/venetanji/dev/ComfyUI/comfy_extras/nodes_lt.py",
+    "source_file_sha256": "6b2f6897a40c2f98f3102fd06aa5fbe29b321fa9e96741d8c2efd24bf78be54e",
+    "line": 213,
+    "source": "def get_latent_index(cls, cond, latent_length, guide_length, frame_idx, scale_factors):\n        time_scale_factor, _, _ = scale_factors\n        _, num_keyframes = get_keyframe_idxs(cond)\n        latent_count = latent_length - num_keyframes\n        frame_idx = frame_idx if frame_idx >= 0 else max((latent_count - 1) * time_scale_factor + 1 + frame_idx, 0)\n        if guide_length > 1 and frame_idx != 0:\n            frame_idx = (frame_idx - 1) // time_scale_factor * time_scale_factor + 1 # frame index - 1 must be divisible by 8 or frame_idx == 0\n\n        latent_idx = (frame_idx + time_scale_factor - 1) // time_scale_factor\n\n        return frame_idx, latent_idx\n",
+    "source_sha256": "149b22ae677b48ba003fe78e0be2a58a1b476700df332a8d21f789954d2ac8e6"
+  }
+}

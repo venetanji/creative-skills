@@ -1,0 +1,289 @@
+{
+  "maintained_utc_date": "2026-10-02",
+  "records": [
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/usage-guides/prompting-guide.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.437718+00:00",
+      "sha256": "5c1450e56fd7691427be6803e50f5a8f575483c27205d44488a7bbadfd958ee0",
+      "bytes": 16577,
+      "evidence_file": "ltx25/prompting-guide.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/usage-guides/image-to-video.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.438046+00:00",
+      "sha256": "5d9c285d8d204655c16dd6e148cd543894c855e7282b9239890de9d28e4c3964",
+      "bytes": 9966,
+      "evidence_file": "ltx25/image-to-video.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/usage-guides/audio-to-video.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.438314+00:00",
+      "sha256": "0ab06b850ed39b961d56e8f05ad780a31baabd615868b30aa9fb33b67bf89a56",
+      "bytes": 6571,
+      "evidence_file": "ltx25/audio-to-video.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/usage-guides/lo-ra.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.437997+00:00",
+      "sha256": "fe6bbb6a13c9747c7f6799e5d77c775478355cbc4ed8f743600f59feeed5dab7",
+      "bytes": 9106,
+      "evidence_file": "ltx25/lo-ra.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/feature-guides/structural-control/union-control.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.912415+00:00",
+      "sha256": "fccd62f6b4425fd1cff496cb1415d13c65642cbb3a3acd27ace4c77f3131c07e",
+      "bytes": 9043,
+      "evidence_file": "ltx25/union-control.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/feature-guides/structural-control/motion-control.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.865305+00:00",
+      "sha256": "1327dd6736c11f05acd7609df7b1151c1a16c9417e6c2bd0afc2192b5b5b3e48",
+      "bytes": 9169,
+      "evidence_file": "ltx25/motion-control.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/reference/workflow-asset-compatibility.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:03.102016+00:00",
+      "sha256": "cd13e972b849543a9f85a496aa6b8df2d18f0ab524b1b6b266781315eb9412f8",
+      "bytes": 13590,
+      "evidence_file": "ltx25/workflow-asset-compatibility.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/getting-started/overview.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.787554+00:00",
+      "sha256": "dad5fc93049e03075fea7e8c04205e837a3acc98595808e3bad3d62f592496af",
+      "bytes": 3532,
+      "evidence_file": "ltx25/overview.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://ltx.io/blog/ltx-2-5-prompt-guide",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:02.894927+00:00",
+      "sha256": "54cf6e2f02a81a4f223b8c45066eb9fd40c61082d6ce43cf6d92337d2fd1c754",
+      "bytes": 229816,
+      "evidence_file": "ltx25/ltx25-blog.html"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:03.133590+00:00",
+      "sha256": "aa5784c7f0fc7a6dd66b1a67dccdcee3177174df61b2a984cb21bce435aa30ad",
+      "bytes": 231435,
+      "evidence_file": "ltx25/ltx25-model-card.html"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5-Diffusers",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:52:03.192102+00:00",
+      "sha256": "d5654903a83fbe99266cdad3060b2be9ba95729ecd3d2c9ec1d3377c7747597c",
+      "bytes": 244330,
+      "evidence_file": "ltx25/ltx25-diffusers-model-card.html"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://docs.ltx.io/open-source-model/integration-tools/ic-lo-ra-adapters.md",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:53:15.036774+00:00",
+      "sha256": "f7d86dc70faee656d64260770800e2f94f82aabfa58c9ec49eb212cc00b6b3c9",
+      "bytes": 17110,
+      "evidence_file": "ltx25/ic-lo-ra-adapters.md"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:53:15.340531+00:00",
+      "sha256": "f38bc3c783621112d509851c7fef4d11a467344af9eaa70b87358d60b7898eb2",
+      "bytes": 338970,
+      "evidence_file": "ltx25/ingredients-model-card.html"
+    },
+    {
+      "model": "ltx25",
+      "url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Layout-To-Render",
+      "revision": null,
+      "accessed_utc": "2026-10-02T15:53:15.620728+00:00",
+      "sha256": "65235e72bd8a512d043643c67a197c8d6e1cb225cf7b894bfc5f7d1869fb8be0",
+      "bytes": 176097,
+      "evidence_file": "ltx25/layout-to-render-model-card.html"
+    },
+    {
+      "model": "h3",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/raw/42ed227ee7df40d41602854ae760620d6eb651fe/README.md",
+      "revision": "42ed227ee7df40d41602854ae760620d6eb651fe",
+      "accessed_utc": "2026-10-02T15:50:48.844044+00:00",
+      "sha256": "f0116a90332496bdfcc827320c603a26b849c73bf804f2674d03682fbbd2334a",
+      "bytes": 38406,
+      "evidence_file": "h3/MiniMaxAI--README.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/raw/42ed227ee7df40d41602854ae760620d6eb651fe/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md",
+      "revision": "42ed227ee7df40d41602854ae760620d6eb651fe",
+      "accessed_utc": "2026-10-02T15:50:49.090523+00:00",
+      "sha256": "2cfebc096a6e08370f288d468d90b60f7f9bcb938f94bf090816e910e48e75fc",
+      "bytes": 15773,
+      "evidence_file": "h3/MiniMaxAI--docs--VIDEO_PROMPT_WRITING_GUIDE_base_en.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://huggingface.co/MiniMaxAI/MiniMax-H3/raw/42ed227ee7df40d41602854ae760620d6eb651fe/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md",
+      "revision": "42ed227ee7df40d41602854ae760620d6eb651fe",
+      "accessed_utc": "2026-10-02T15:50:49.345032+00:00",
+      "sha256": "1e574f356716ad55612247ffb7bbccbcdb484ad96599d63c7dca1af186b1fab7",
+      "bytes": 23553,
+      "evidence_file": "h3/MiniMaxAI--docs--VIDEO_PROMPT_WRITING_GUIDE_ref_en.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/raw/e5eb578a89295337b8ff433a035929ce0279e0b6/README.md",
+      "revision": "e5eb578a89295337b8ff433a035929ce0279e0b6",
+      "accessed_utc": "2026-10-02T15:50:49.830914+00:00",
+      "sha256": "cfe1e532856bc48fc2a6de64b5db0aa68282476f5488975bf3d1519438515fe9",
+      "bytes": 8293,
+      "evidence_file": "h3/Comfy-Org--README.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/raw/3ec17a324ced54151364f24f8b5fb6bf7e26414f/README.md",
+      "revision": "3ec17a324ced54151364f24f8b5fb6bf7e26414f",
+      "accessed_utc": "2026-10-02T15:50:50.299621+00:00",
+      "sha256": "4939071ba0e40d0c6f3266afd366862b1062fa040b96d4b457c7d582dc9e4936",
+      "bytes": 1396,
+      "evidence_file": "h3/lightx2v--README.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/d21241f0a4b3acbb34c97dae47fa417b7065e438/skills/h3-prompt-writing/SKILL.md",
+      "revision": "d21241f0a4b3acbb34c97dae47fa417b7065e438",
+      "accessed_utc": "2026-10-02T15:50:51.010074+00:00",
+      "sha256": "a7000443588ca3f145e3b3fd8900f14e0325dc460bd811268fac89a9dc8e56d0",
+      "bytes": 2623,
+      "evidence_file": "h3/MiniMax-AI--skills--h3-prompt-writing--SKILL.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/d21241f0a4b3acbb34c97dae47fa417b7065e438/skills/h3-prompt-writing/references/base-en.txt",
+      "revision": "d21241f0a4b3acbb34c97dae47fa417b7065e438",
+      "accessed_utc": "2026-10-02T15:50:51.341869+00:00",
+      "sha256": "2cfebc096a6e08370f288d468d90b60f7f9bcb938f94bf090816e910e48e75fc",
+      "bytes": 15773,
+      "evidence_file": "h3/MiniMax-AI--skills--h3-prompt-writing--references--base-en.txt"
+    },
+    {
+      "model": "h3",
+      "url": "https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/d21241f0a4b3acbb34c97dae47fa417b7065e438/skills/h3-prompt-writing/references/ref-en.txt",
+      "revision": "d21241f0a4b3acbb34c97dae47fa417b7065e438",
+      "accessed_utc": "2026-10-02T15:50:51.666276+00:00",
+      "sha256": "1e574f356716ad55612247ffb7bbccbcdb484ad96599d63c7dca1af186b1fab7",
+      "bytes": 23553,
+      "evidence_file": "h3/MiniMax-AI--skills--h3-prompt-writing--references--ref-en.txt"
+    },
+    {
+      "model": "h3",
+      "url": "https://raw.githubusercontent.com/ModelTC/Minimax-H3-Turbo/02e26d591f7a04d5d1a074c9566d5dd4f22f6225/README.md",
+      "revision": "02e26d591f7a04d5d1a074c9566d5dd4f22f6225",
+      "accessed_utc": "2026-10-02T15:50:52.440940+00:00",
+      "sha256": "282e45f90c7fed5eb4861d1a0cd17199604e31d74d7bdd4c191b4d39cdbde138",
+      "bytes": 9330,
+      "evidence_file": "h3/ModelTC--README.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-native.md",
+      "revision": "rolling documentation; SHA256 snapshot",
+      "accessed_utc": "2026-10-02T15:50:52.768791+00:00",
+      "sha256": "80ed320357ad8fe6a52e892f36e54166d80ad9ecf101df9866aec82852d8d514",
+      "bytes": 16893,
+      "evidence_file": "h3/Comfy-docs--minimax-h3-native.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-prompt-guide.md",
+      "revision": "rolling documentation; SHA256 snapshot",
+      "accessed_utc": "2026-10-02T15:50:53.216609+00:00",
+      "sha256": "61e836e7491f5505fc84656434b0911cf736905a4ea4f291081b66ea9250d056",
+      "bytes": 11185,
+      "evidence_file": "h3/Comfy-docs--minimax-h3-prompt-guide.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-multiframe.md",
+      "revision": "rolling documentation; SHA256 snapshot",
+      "accessed_utc": "2026-10-02T15:50:53.657569+00:00",
+      "sha256": "8d2ca1681eb4b6b3cdd6ac736e36694fe1d9dd674ac965b723ebeca55c817372",
+      "bytes": 6085,
+      "evidence_file": "h3/Comfy-docs--minimax-h3-multiframe.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://docs.comfy.org/tutorials/video/minimax/minimax-h3-fun-controlnet.md",
+      "revision": "rolling documentation; SHA256 snapshot",
+      "accessed_utc": "2026-10-02T15:50:54.050025+00:00",
+      "sha256": "867258260d0ac045c3f38d5f57deb8c46ba5e871dbf4019ec7d1d6295e06c608",
+      "bytes": 6733,
+      "evidence_file": "h3/Comfy-docs--minimax-h3-fun-controlnet.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://raw.githubusercontent.com/ModelTC/Minimax-H3-Turbo/02e26d591f7a04d5d1a074c9566d5dd4f22f6225/COMFYUI_SETUP_AND_INFERENCE.md",
+      "revision": "02e26d591f7a04d5d1a074c9566d5dd4f22f6225",
+      "accessed_utc": "2026-10-02T15:52:45.480434+00:00",
+      "sha256": "a03df2e50be3a3381f0e173b0e71368e5879da5e57415389648b8b85486e8f71",
+      "bytes": 2966,
+      "evidence_file": "h3/ModelTC--COMFYUI_SETUP_AND_INFERENCE.md"
+    },
+    {
+      "model": "h3",
+      "url": "https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union/raw/9df91437f0890b20f8a0b07c1d9500648cfcbf44/README.md",
+      "revision": "9df91437f0890b20f8a0b07c1d9500648cfcbf44",
+      "accessed_utc": "2026-10-02T15:52:45.715196+00:00",
+      "sha256": "0d6d9491ed69cddb64c930518747a9048ef573720daa4fd99d587204f3d48312",
+      "bytes": 7402,
+      "evidence_file": "h3/alibaba-pai--README.md"
+    }
+  ],
+  "local_evidence": [
+    {
+      "kind": "readonly readiness and retained execution provenance",
+      "evidence_file": "media/visionary-landscape-study-20261002/readiness/readiness.json",
+      "sha256": "85c5a477fe108240981861730b633e14d0c8e65f2aeb6ae85633c1199c79ceb7",
+      "note": "Current size/header/target-shape checks, not newly recomputed full weight hashes or aesthetic validation."
+    },
+    {
+      "kind": "retained local adapter evidence",
+      "evidence_file": "media/easel-loras-2026-09-30/catalog-pinned.json",
+      "sha256": "3faba4af15374f19d833556527ba77efb6fc22d18318cf43fdec1608f92af556"
+    },
+    {
+      "kind": "retained local adapter evidence",
+      "evidence_file": "media/easel-loras-2026-09-30/download-report-after-access.json",
+      "sha256": "34f0f778de652acbc0c21f7c8f098089374047002b56a8b566847f9b39b738b1"
+    },
+    {
+      "kind": "retained local adapter evidence",
+      "evidence_file": "media/easel-loras-2026-09-30/camera-shape-audit.json",
+      "sha256": "b0e875b705bb92c48573cd2a04535743b1866bf2d3b412f35d35809f0df8ccf7"
+    }
+  ]
+}

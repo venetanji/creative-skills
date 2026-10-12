@@ -17,6 +17,11 @@ metadata:
   }
 ---
 
+For the opt-in `video.model_profile` route, read [PROFILED-VIDEO.md](PROFILED-VIDEO.md).
+It uses exact retained frame spans and full-master audio; legacy options are not
+automatically compatible, and no global LTX-2.5 default is promoted.
+
+
 # Music Video Skill
 
 Author a YAML spec → run one command → get a full music video.
