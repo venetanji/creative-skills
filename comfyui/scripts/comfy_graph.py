@@ -3,6 +3,7 @@
 
 Usage:
   python comfy_graph.py t2i   --prompt "a cat" [--notify-target discord:...]
+  python comfy_graph.py moss-t2i --prompt "a cat" [--model-path /server/path/MOSS-Image-Base]
   python comfy_graph.py i2i   --image photo.jpg --prompt "cat wearing hat"
   python comfy_graph.py t2v   --prompt "a forest" --seconds 5
   python comfy_graph.py h3-ia2v --image photo.jpg --audio track.mp3 --prompt "..." --frames 124
@@ -319,8 +320,24 @@ def _h_sam3d(opts, seed, prompt):
         detector_model=opts.get("detector_model", sam3d_body.DETECTOR_MODEL))
 
 
+def _h_moss_t2i(opts, seed, prompt):
+    from creative_comfy_graph.moss_image import MODEL_PATH, moss_image_text_to_image
+
+    return moss_image_text_to_image(
+        prompt=prompt, model_path=opts.get("model_path", MODEL_PATH),
+        width=int(opts.get("width", 1024)), height=int(opts.get("height", 1024)),
+        steps=int(opts.get("steps", 50)), cfg=float(opts.get("cfg", 3.0)),
+        shift=float(opts.get("shift", 5.0)), negative_prompt=opts.get("negative_prompt", ""),
+        skip_layers=opts.get("skip_layers", "22"),
+        weight_dtype=opts.get("weight_dtype", "fp8_e4m3fn"),
+        text_device=opts.get("text_device", "cpu"),
+        batch_size=int(opts.get("batch_size", 1)), seed=seed,
+        filename_prefix=opts.get("prefix", "moss-image"))
+
+
 HANDLERS = {
     "sam3d": _h_sam3d,
+    "moss-t2i": _h_moss_t2i,
     "t2i": lambda opts, seed, prompt: flux2.flux2_text_to_image(
         prompt=prompt,
         width=int(opts.get("width", 1024)), height=int(opts.get("height", 576)),
