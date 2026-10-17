@@ -11,6 +11,7 @@ or deployment is implied. The package contains:
 |---|---|
 | `creative_comfy_graph` | `NodeRef`, `WorkflowGraph`, `__version__` |
 | `creative_comfy_graph.flux2` | Flux2 text-to-image, reference edits, multi-prompt and angle builders |
+| `creative_comfy_graph.moss_image` | Native MOSS-Image HF text-to-image with CPU text encoding and FP8 low-VRAM defaults |
 | `creative_comfy_graph.tts` | Qwen speech and voice-clone builders |
 | `creative_comfy_graph.post` | Stem/transcription and concatenation graph builders |
 | `creative_comfy_graph.minimax_h3` | Experimental FL8 text/first-frame and REF20 semantic-image native generated AV builders (offline-only) |
@@ -39,6 +40,42 @@ Node IDs are zero-based strings. Only direct NodeRef inputs become links; nested
 references remain untouched. `to_dict()` copies the outer dictionary only.
 Legacy `core.NodeRef` and `core.WorkflowGraph` re-export the same classes.
 Legacy family modules retain builder signatures, constants and aliases.
+
+## MOSS-Image
+
+`creative_comfy_graph.moss_image.moss_image_text_to_image(prompt, **options)`
+reproduces OpenMOSS's native ComfyUI workflow: 50 steps, CFG 3, shift 5,
+Euler / sgm_uniform, and Simple SLG single layer 22. It uses
+`MOSSImageHFLoader`, `EmptyFlux2LatentImage`, and standard ComfyUI nodes;
+install `OpenMOSS/MOSS-Image/comfyui/moss-image` on the server first.
+`model_path` must name a local Hugging Face directory containing `transformer`,
+`text_encoder`, `tokenizer`, and `vae`; a Hub repository ID is not a local path.
+The default is `/app/ComfyUI/models/moss-image/MOSS-Image-Base`.
+
+The 12 GB preset uses `weight_dtype="fp8_e4m3fn"`, `text_device="cpu"`, and
+batch size 1. CPU offload still needs substantial system RAM. Use
+`weight_dtype="default", text_device="default"` for upstream loader defaults.
+Set `skip_layers=""` to disable skipping, and pass `seed=0` for a literal zero
+seed. Width and height must be positive multiples of 16. This is generation
+only, not image editing or reference conditioning.
+
+The skill CLI routes `moss-t2i` to `COMFY_URL_FLUX` (falling back to `COMFY_URL`),
+never to `COMFY_URL_VIDEO` automatically:
+
+```sh
+python comfyui/scripts/comfy_graph.py dump moss-t2i --prompt "A lighthouse at sunrise" --seed 42
+COMFY_URL_FLUX=http://localhost:8189 python comfyui/scripts/comfy_graph.py moss-t2i \
+  --prompt "A lighthouse at sunrise" --seed 42 --timeout 1800
+```
+
+Graph reference: OpenMOSS/MOSS-Image commit
+`c1355e6b1986dfe8fba3c0455783a05899212342`,
+`comfyui/moss-image/example_workflows/moss-image-api.json` (Apache-2.0).
+
+On 2026-10-17, this preset completed a 1024x1024, 50-step, seed-42 generation
+on a 12 GiB RTX 3080 Ti in about 90 seconds. Sampled whole-GPU memory peaked at
+6008 MiB. The separate video ComfyUI process was not restarted or interrupted.
+This is one tested configuration, not a guarantee for every prompt, size or batch.
 
 ## Explicit Environment Provisioning
 
