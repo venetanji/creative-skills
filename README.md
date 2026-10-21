@@ -1,6 +1,6 @@
 # creative-skills
 
-Five composable [AgentSkills](https://agentskills.ai/) that build on each other so an agent can take a text description and produce a finished music video or dialogue-driven drama clip. Designed for agents running under [OpenClaw](https://openclaw.ai/), but the scripts are standalone and work on any Linux host with a reachable ComfyUI server.
+Five composable [AgentSkills](https://agentskills.ai/) build creative videos from text, music, and dialogue; a separate focused `youtube-upload/` skill supports authorized, resumable final-video delivery. Designed for [OpenClaw](https://openclaw.ai/); scripts are standalone where their documented backends are available.
 
 ```
  prompt ─┐                                                           ┌─► suno song (.mp3, both variants)
@@ -135,6 +135,10 @@ Same LTX ia2v engine as `music-video`, but the primary axis is dialogue cues (fr
 
 Use `drama-video` when the piece is dialogue + ambience; use `music-video` when it's song-driven (even if there's dialogue over it — add dialogue as a per-scene `audio:` override in the music-video spec).
 
+### [`youtube-upload/`](youtube-upload/) — authorized final-video delivery
+
+A separate AgentSkill for resumable YouTube Data API v3 uploads. It defaults to private visibility, keeps operator-owned credentials outside the repository, fingerprints source/state to prevent duplicate uploads, and verifies channel/privacy/upload versus processing status. Agents without authorized account access hand execution to the credential holder. See the [upload runbook](youtube-upload/references/upload-workflow.md).
+
 ## How they compose
 
 An agent asks the user for a song concept → hand-writes a YAML (style brief, lyrics, scene list with per-scene flux2 anchor prompts + camera LoRAs) → runs `music_video.py all` → delivers the resulting `final.mp4`(s) back over whatever channel.
@@ -168,10 +172,10 @@ These are AgentSkill directories. Drop them wherever your runtime expects skills
 
 ```bash
 # OpenClaw global (read-only, shared across all agents):
-cp -r comfyui suno-mcp storyboard music-video drama-video ~/.openclaw/skills/
+cp -r comfyui suno-mcp storyboard music-video drama-video youtube-upload ~/.openclaw/skills/
 
 # OpenClaw per-agent (workspace-scoped):
-cp -r comfyui suno-mcp storyboard music-video drama-video /path/to/agent/workspace/skills/
+cp -r comfyui suno-mcp storyboard music-video drama-video youtube-upload /path/to/agent/workspace/skills/
 ```
 
 Or use the scripts directly — they all have shebangs (`#!/usr/bin/env python3` or `#!/usr/bin/env -S uv run --script` where a dependency is needed).
